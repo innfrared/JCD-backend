@@ -1,0 +1,202 @@
+"""Catalog use cases."""
+from typing import List
+from src.domain.shared.exceptions import NotFoundError
+from src.domain.catalog.entities import Product
+from src.application.catalog.ports import CategoryRepository, ProductRepository
+from src.application.catalog.dto import (
+    CategoryResponse, SubcategoryResponse, ProductResponse, VariantProductPreview,
+    ListProductsRequest
+)
+from src.application.shared.pagination import PaginatedResult
+
+
+def _product_to_response(
+    product_repo: ProductRepository,
+    category_repo: CategoryRepository,
+    product: Product
+) -> ProductResponse:
+    """Build ProductResponse from domain entity with related data."""
+    specs_simple, specs_detailed = product_repo.get_specifications(product.id)
+    
+    # Get category and subcategory
+    category = category_repo.get_by_id(product.category_id) if product.category_id else None
+    category_response = CategoryResponse(
+        id=category.id,
+        name=category.name,
+        slug=category.slug,
+        created_at=category.created_at
+    ) if category else None
+    
+    subcategory_response = None
+    if product.subcategory_id:
+        subcategory = category_repo.get_subcategory_by_id(product.subcategory_id)
+        if subcategory:
+            subcategory_response = SubcategoryResponse(
+                id=subcategory.id,
+                category_id=subcategory.category_id,
+                name=subcategory.name,
+                slug=subcategory.slug,
+                created_at=subcategory.created_at
+            )
+    
+    # Get variant group products if product belongs to a variant group
+    variant_previews = []
+    if product.variant_group_id:
+        variant_products = product_repo.get_variant_group_products(
+            product.variant_group_id,
+            exclude_product_id=product.id
+        )
+        # Products are already ordered by repository (default first, then by id)
+        
+        variant_previews = [
+            VariantProductPreview(
+                id=v.id,
+                name=v.name,
+                price=str(v.price),
+                availability=v.availability.value,
+                image=v.variant_image,
+                color_name=v.variant_color_name,
+                color_palette=v.variant_color_palette
+            )
+            for v in variant_products
+        ]
+    
+    return ProductResponse(
+        id=product.id,
+        name=product.name,
+        brand=product.brand,
+        price=str(product.price),
+        price_new=str(product.price_new) if product.price_new else None,
+        price_old=str(product.price_old) if product.price_old else None,
+        availability=product.availability.value,
+        category_id=product.category_id,
+        subcategory_id=product.subcategory_id,
+        category=category_response,
+        subcategory=subcategory_response,
+        currency=product.currency.value,
+        variant_group_id=product.variant_group_id,
+        variant_color_name=product.variant_color_name,
+        variant_color_palette=product.variant_color_palette,
+        variant_image=product.variant_image,
+        created_at=product.created_at,
+        updated_at=product.updated_at,
+        variants=variant_previews,
+        specifications=specs_simple,
+        specifications_detailed=specs_detailed
+    )
+
+
+class ListCategoriesUseCase:
+    """List categories use case."""
+    
+    def __init__(self, category_repo: CategoryRepository):
+        self.category_repo = category_repo
+    
+    def execute(self) -> List[CategoryResponse]:
+        """Execute list categories."""
+        categories = self.category_repo.get_all()
+        return [
+            CategoryResponse(
+                id=cat.id,
+                name=cat.name,
+                slug=cat.slug,
+                created_at=cat.created_at
+            )
+            for cat in categories
+        ]
+
+
+class ListProductsUseCase:
+    """List products use case."""
+    
+    def __init__(self, product_repo: ProductRepository, category_repo: CategoryRepository):
+        self.product_repo = product_repo
+        self.category_repo = category_repo
+    
+    def execute(self, request: ListProductsRequest) -> PaginatedResult[ProductResponse]:
+        """Execute list products."""
+        products, total = self.product_repo.get_all(
+            category_id=request.category_id,
+            subcategory_id=request.subcategory_id,
+            search=request.search,
+            availability=request.availability,
+            spec_filters=request.spec_filters,
+            page=request.page,
+            page_size=request.page_size
+        )
+        
+        # Convert to response DTOs (without variants for list view - only in detail)
+        product_responses = []
+        for product in products:
+            specs_simple, specs_detailed = self.product_repo.get_specifications(product.id)
+            
+            # Get category and subcategory
+            category = self.category_repo.get_by_id(product.category_id) if product.category_id else None
+            category_response = CategoryResponse(
+                id=category.id,
+                name=category.name,
+                slug=category.slug,
+                created_at=category.created_at
+            ) if category else None
+            
+            subcategory_response = None
+            if product.subcategory_id:
+                subcategory = self.category_repo.get_subcategory_by_id(product.subcategory_id)
+                if subcategory:
+                    subcategory_response = SubcategoryResponse(
+                        id=subcategory.id,
+                        category_id=subcategory.category_id,
+                        name=subcategory.name,
+                        slug=subcategory.slug,
+                        created_at=subcategory.created_at
+                    )
+            
+            product_responses.append(ProductResponse(
+                id=product.id,
+                name=product.name,
+                brand=product.brand,
+                price=str(product.price),
+                price_new=str(product.price_new) if product.price_new else None,
+                price_old=str(product.price_old) if product.price_old else None,
+                availability=product.availability.value,
+                category_id=product.category_id,
+                subcategory_id=product.subcategory_id,
+                category=category_response,
+                subcategory=subcategory_response,
+                currency=product.currency.value,
+                variant_group_id=product.variant_group_id,
+                variant_color_name=product.variant_color_name,
+                variant_color_palette=product.variant_color_palette,
+                variant_image=product.variant_image,
+                created_at=product.created_at,
+                updated_at=product.updated_at,
+                variants=[],  # No variants in list view
+                specifications=specs_simple,
+                specifications_detailed=specs_detailed
+            ))
+        
+        total_pages = (total + request.page_size - 1) // request.page_size
+        
+        return PaginatedResult(
+            items=product_responses,
+            total=total,
+            page=request.page,
+            page_size=request.page_size,
+            total_pages=total_pages
+        )
+
+
+class GetProductUseCase:
+    """Get product use case."""
+    
+    def __init__(self, product_repo: ProductRepository, category_repo: CategoryRepository):
+        self.product_repo = product_repo
+        self.category_repo = category_repo
+    
+    def execute(self, product_id: int) -> ProductResponse:
+        """Execute get product."""
+        product = self.product_repo.get_by_id(product_id)
+        if not product:
+            raise NotFoundError("Product not found")
+        
+        return _product_to_response(self.product_repo, self.category_repo, product)
