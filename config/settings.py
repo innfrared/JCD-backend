@@ -14,6 +14,11 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me-in-producti
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+CSRF_TRUSTED_ORIGINS = (
+    os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if os.environ.get('CSRF_TRUSTED_ORIGINS')
+    else []
+)
 
 # Application definition
 INSTALLED_APPS = [
@@ -65,23 +70,28 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
-DATABASE_URL = os.environ.get('DATABASE_URL')
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if DATABASE_URL:
     import dj_database_url
 
     DATABASES = {
-        'default': dj_database_url.parse(
+        "default": dj_database_url.parse(
             DATABASE_URL,
-            conn_max_age=600,
             ssl_require=True,
         )
     }
+
+    if "pooler.supabase.com" in DATABASE_URL:
+        DATABASES["default"]["CONN_MAX_AGE"] = 0
+    else:
+        DATABASES["default"]["CONN_MAX_AGE"] = 600
+
 else:
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
         }
     }
 
