@@ -25,6 +25,11 @@ class CategoryRepository(ABC):
         """Get subcategory by ID."""
         pass
 
+    @abstractmethod
+    def get_subcategories_by_category(self, category_id: int) -> List[Subcategory]:
+        """Get subcategories by category ID."""
+        pass
+
 
 class ProductRepository(ABC):
     """Product repository interface."""

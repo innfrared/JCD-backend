@@ -25,6 +25,16 @@ class SubcategoryResponse:
 
 
 @dataclass
+class CategoryWithSubcategoriesResponse:
+    """Category response with subcategories."""
+    id: int
+    name: str
+    slug: str
+    created_at: datetime
+    subcategories: List[SubcategoryResponse]
+
+
+@dataclass
 class VariantProductPreview:
     """Variant product preview DTO."""
     id: int

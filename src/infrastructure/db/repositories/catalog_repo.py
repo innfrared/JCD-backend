@@ -50,6 +50,13 @@ class DjangoCategoryRepository(CategoryRepository):
             return self._to_domain_subcategory(subcategory_model)
         except SubcategoryModel.DoesNotExist:
             return None
+
+    def get_subcategories_by_category(self, category_id: int) -> List[Subcategory]:
+        """Get subcategories for a category."""
+        subcategory_models = SubcategoryModel.objects.filter(
+            category_id=category_id
+        ).order_by('name')
+        return [self._to_domain_subcategory(sub) for sub in subcategory_models]
     
     def _to_domain_subcategory(self, subcategory_model: SubcategoryModel) -> Subcategory:
         """Convert Django model to domain entity."""

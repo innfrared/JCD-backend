@@ -277,10 +277,10 @@ def get_first_image(bag_number: int) -> str:
     images = sorted(bag_dir.glob("*.jpg"))
     if images:
         # Return URL path that will be served by Django
-        # Use underscore format (bag_2) to match frontend expectations
-        # Format: /media/bags/bag_{bag_number}/image_name.jpg
+        # Use original folder naming (e.g., "bag 2")
+        # Format: /media/bag 2/image_name.jpg
         image_name = images[0].name
-        return f"/media/bags/bag_{bag_number}/{image_name}"
+        return f"/media/bag{bag_number}/{image_name}"
     return ""
 
 

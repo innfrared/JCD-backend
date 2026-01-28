@@ -1,8 +1,12 @@
 """Catalog serializers."""
 from rest_framework import serializers
 from src.application.catalog.dto import (
-    CategoryResponse, ProductResponse, VariantProductPreview,
-    SpecificationDetail, ListProductsRequest
+    CategoryResponse,
+    CategoryWithSubcategoriesResponse,
+    ProductResponse,
+    VariantProductPreview,
+    SpecificationDetail,
+    ListProductsRequest,
 )
 
 
@@ -21,6 +25,15 @@ class SubcategoryResponseSerializer(serializers.Serializer):
     name = serializers.CharField()
     slug = serializers.CharField()
     created_at = serializers.DateTimeField()
+
+
+class CategoryWithSubcategoriesResponseSerializer(serializers.Serializer):
+    """Category response serializer with subcategories."""
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    slug = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    subcategories = SubcategoryResponseSerializer(many=True)
 
 
 class VariantProductPreviewSerializer(serializers.Serializer):

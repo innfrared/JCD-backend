@@ -4,7 +4,11 @@ from rest_framework.permissions import AllowAny
 from rest_framework import status
 
 from src.application.catalog.use_cases import (
-    ListCategoriesUseCase, ListProductsUseCase, GetProductUseCase
+    ListCategoriesUseCase,
+    ListCategoriesWithSubcategoriesUseCase,
+    ListSubcategoriesByCategoryUseCase,
+    ListProductsUseCase,
+    GetProductUseCase,
 )
 from src.application.catalog.ports import CategoryRepository, ProductRepository
 from src.infrastructure.db.repositories.catalog_repo import (
@@ -12,8 +16,11 @@ from src.infrastructure.db.repositories.catalog_repo import (
 )
 from src.domain.shared.exceptions import NotFoundError
 from interfaces.rest.catalog.serializers import (
-    CategoryResponseSerializer, ProductResponseSerializer,
-    PaginatedProductResponseSerializer
+    CategoryResponseSerializer,
+    CategoryWithSubcategoriesResponseSerializer,
+    SubcategoryResponseSerializer,
+    ProductResponseSerializer,
+    PaginatedProductResponseSerializer,
 )
 from interfaces.rest.shared.responses import success_response, error_response
 
@@ -33,6 +40,33 @@ class CategoryListView(APIView):
         categories = use_case.execute()
         return success_response([
             CategoryResponseSerializer(cat).data for cat in categories
+        ])
+
+
+class CategoryWithSubcategoriesListView(APIView):
+    """Category list with subcategories view."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        """List categories with subcategories."""
+        use_case = ListCategoriesWithSubcategoriesUseCase(_category_repo)
+        categories = use_case.execute()
+        return success_response([
+            CategoryWithSubcategoriesResponseSerializer(cat).data
+            for cat in categories
+        ])
+
+
+class SubcategoryListByCategoryView(APIView):
+    """Subcategory list for a category view."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, category_id: int):
+        """List subcategories for a category."""
+        use_case = ListSubcategoriesByCategoryUseCase(_category_repo)
+        subcategories = use_case.execute(category_id)
+        return success_response([
+            SubcategoryResponseSerializer(sub).data for sub in subcategories
         ])
 
 

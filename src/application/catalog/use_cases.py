@@ -4,8 +4,12 @@ from src.domain.shared.exceptions import NotFoundError
 from src.domain.catalog.entities import Product
 from src.application.catalog.ports import CategoryRepository, ProductRepository
 from src.application.catalog.dto import (
-    CategoryResponse, SubcategoryResponse, ProductResponse, VariantProductPreview,
-    ListProductsRequest
+    CategoryResponse,
+    CategoryWithSubcategoriesResponse,
+    SubcategoryResponse,
+    ProductResponse,
+    VariantProductPreview,
+    ListProductsRequest,
 )
 from src.application.shared.pagination import PaginatedResult
 
@@ -104,6 +108,62 @@ class ListCategoriesUseCase:
             )
             for cat in categories
         ]
+
+
+class ListSubcategoriesByCategoryUseCase:
+    """List subcategories for a category."""
+
+    def __init__(self, category_repo: CategoryRepository):
+        self.category_repo = category_repo
+
+    def execute(self, category_id: int) -> List[SubcategoryResponse]:
+        """Execute list subcategories."""
+        subcategories = self.category_repo.get_subcategories_by_category(category_id)
+        return [
+            SubcategoryResponse(
+                id=sub.id,
+                category_id=sub.category_id,
+                name=sub.name,
+                slug=sub.slug,
+                created_at=sub.created_at
+            )
+            for sub in subcategories
+        ]
+
+
+class ListCategoriesWithSubcategoriesUseCase:
+    """List categories with subcategories."""
+
+    def __init__(self, category_repo: CategoryRepository):
+        self.category_repo = category_repo
+
+    def execute(self) -> List[CategoryWithSubcategoriesResponse]:
+        """Execute list categories with subcategories."""
+        categories = self.category_repo.get_all()
+        results: List[CategoryWithSubcategoriesResponse] = []
+
+        for category in categories:
+            subcategories = self.category_repo.get_subcategories_by_category(
+                category.id
+            )
+            results.append(CategoryWithSubcategoriesResponse(
+                id=category.id,
+                name=category.name,
+                slug=category.slug,
+                created_at=category.created_at,
+                subcategories=[
+                    SubcategoryResponse(
+                        id=sub.id,
+                        category_id=sub.category_id,
+                        name=sub.name,
+                        slug=sub.slug,
+                        created_at=sub.created_at
+                    )
+                    for sub in subcategories
+                ],
+            ))
+
+        return results
 
 
 class ListProductsUseCase:
