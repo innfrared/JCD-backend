@@ -16,7 +16,7 @@ class ProductCard:
     currency: str
     image_url: Optional[str]  # Primary image from first variant or product
     category_id: int
-    subcategory_id: Optional[int]
+    subcategory_ids: List[int]
 
 
 @dataclass

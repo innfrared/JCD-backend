@@ -112,6 +112,6 @@ class GetHomePageSectionsUseCase:
             currency=product.currency.value,
             image_url=image_url,
             category_id=product.category_id,
-            subcategory_id=product.subcategory_id
+            subcategory_ids=product.subcategory_ids
         )
 

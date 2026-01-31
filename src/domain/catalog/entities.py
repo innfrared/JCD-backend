@@ -29,6 +29,7 @@ class Subcategory:
     category_id: int
     name: str
     slug: str
+    description: Optional[str]
     created_at: datetime
     
     def __post_init__(self):
@@ -63,7 +64,7 @@ class Product:
     price_old: Optional[Decimal]
     availability: Availability
     category_id: int
-    subcategory_id: Optional[int]
+    subcategory_ids: List[int]
     currency: Currency
     variant_group_id: Optional[int]
     variant_color_name: Optional[str]

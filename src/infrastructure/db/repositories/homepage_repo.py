@@ -85,7 +85,7 @@ class DjangoProductCardRepository(ProductCardRepository):
         # Fetch products
         product_models = ProductModel.objects.filter(
             id__in=product_ids
-        ).select_related('category', 'subcategory')
+        ).select_related('category').prefetch_related('subcategories')
         
         # Fetch first variant image URLs for each product
         from src.infrastructure.db.models.catalog import ProductVariant as ProductVariantModel
@@ -130,7 +130,9 @@ class DjangoProductCardRepository(ProductCardRepository):
             price_old=product_model.price_old,
             availability=Availability(product_model.availability),
             category_id=product_model.category_id,
-            subcategory_id=product_model.subcategory_id,
+            subcategory_ids=list(
+                product_model.subcategories.values_list('id', flat=True)
+            ),
             currency=Currency(product_model.currency),
             created_at=product_model.created_at,
             updated_at=product_model.updated_at

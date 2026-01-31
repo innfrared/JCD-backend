@@ -105,13 +105,13 @@ class VariantGroupAdmin(admin.ModelAdmin):
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     """Product admin configuration."""
-    list_display = ('name', 'brand', 'category', 'subcategory', 'variant_group', 'price', 'currency', 'availability', 'created_at')
-    list_filter = ('category', 'subcategory', 'variant_group', 'availability', 'currency', 'created_at')
-    search_fields = ('name', 'brand', 'category__name', 'subcategory__name')
-    raw_id_fields = ('category', 'subcategory', 'variant_group')
+    list_display = ('name', 'brand', 'category', 'subcategories_list', 'variant_group', 'price', 'currency', 'availability', 'created_at')
+    list_filter = ('category', 'subcategories', 'variant_group', 'availability', 'currency', 'created_at')
+    search_fields = ('name', 'brand', 'category__name', 'subcategories__name')
+    raw_id_fields = ('category', 'subcategories', 'variant_group')
     fieldsets = (
         (None, {
-            'fields': ('name', 'brand', 'category', 'subcategory')
+            'fields': ('name', 'brand', 'category', 'subcategories')
         }),
         ('Pricing', {
             'fields': ('price', 'price_new', 'price_old', 'currency', 'availability')
@@ -127,6 +127,11 @@ class ProductAdmin(admin.ModelAdmin):
     )
     readonly_fields = ('created_at', 'updated_at')
     inlines = [ProductVariantInline]  # Keep for backward compatibility, but will be deprecated
+
+    def subcategories_list(self, obj):
+        return ", ".join(obj.subcategories.values_list('name', flat=True))
+
+    subcategories_list.short_description = "Subcategories"
 
 
 @admin.register(Attribute)

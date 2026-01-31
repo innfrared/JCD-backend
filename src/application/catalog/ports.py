@@ -38,7 +38,7 @@ class ProductRepository(ABC):
     def get_all(
         self,
         category_id: Optional[int] = None,
-        subcategory_id: Optional[int] = None,
+        subcategory_ids: Optional[List[int]] = None,
         search: Optional[str] = None,
         availability: Optional[str] = None,
         spec_filters: Optional[Dict[str, str]] = None,

@@ -320,10 +320,11 @@ def create_product_attribute_value(product, attribute, value_text=None, value_nu
 
 def create_or_get_category():
     """Create or get the Bags category."""
-    category, created = Category.objects.get_or_create(
-        slug='bags',
+    category, created = Category.objects.update_or_create(
+        id=1000,
         defaults={
             'name': 'Bags',
+            'slug': 'bags',
         }
     )
     if created:
@@ -331,18 +332,77 @@ def create_or_get_category():
     return category
 
 
-def create_or_get_subcategory(category):
-    """Create or get the Handbags subcategory."""
-    subcategory, created = Subcategory.objects.get_or_create(
-        category=category,
-        slug='handbags',
-        defaults={
-            'name': 'Handbags',
-        }
-    )
-    if created:
-        print(f"Created subcategory: {subcategory.name}")
-    return subcategory
+STYLE_SUBCATEGORIES = {
+    "crossbody": {
+        "id": 1100,
+        "name": "Crossbody Bags",
+        "slug": "crossbody-bags",
+        "description": "Long-strap bags worn across the body for hands-free, everyday comfort.",
+    },
+    "shoulder": {
+        "id": 1200,
+        "name": "Shoulder Bags",
+        "slug": "shoulder-bags",
+        "description": "Medium-size bags designed to rest on the shoulder or under the arm.",
+    },
+    "handbags": {
+        "id": 1300,
+        "name": "Handbags",
+        "slug": "handbags",
+        "description": "Structured bags carried by hand or short handles for a polished look.",
+    },
+    "clutches": {
+        "id": 1400,
+        "name": "Clutches",
+        "slug": "clutches",
+        "description": "Compact bags without long straps, ideal for evenings and minimal carry.",
+    },
+}
+
+BAG_STYLE_MAP = {
+    # Shoulder Bags
+    1: ["shoulder"],
+    2: ["shoulder"],
+    3: ["shoulder"],
+    4: ["shoulder"],
+    8: ["shoulder"],
+    12: ["shoulder", "crossbody"],
+    13: ["shoulder", "crossbody"],
+    14: ["shoulder", "crossbody"],
+    # Crossbody Bags
+    5: ["crossbody", "handbags"],
+    6: ["crossbody", "handbags"],
+    7: ["crossbody", "handbags"],
+    9: ["crossbody"],
+    10: ["crossbody"],
+    11: ["crossbody"],
+    # Handbags
+    15: ["handbags"],
+    16: ["handbags"],
+    17: ["handbags"],
+    # Clutches
+    18: ["clutches"],
+    19: ["clutches"],
+}
+
+
+def create_or_get_subcategories(category):
+    """Create or get style subcategories for Bags."""
+    subcategories = {}
+    for key, data in STYLE_SUBCATEGORIES.items():
+        subcategory, created = Subcategory.objects.update_or_create(
+            id=data["id"],
+            defaults={
+                "category": category,
+                "name": data["name"],
+                "slug": data["slug"],
+                "description": data["description"],
+            },
+        )
+        if created:
+            print(f"Created subcategory: {subcategory.name}")
+        subcategories[key] = subcategory
+    return subcategories
 
 
 def create_variant_group(group_number: int, bag_numbers: list) -> VariantGroup:
@@ -372,7 +432,7 @@ def create_variant_group(group_number: int, bag_numbers: list) -> VariantGroup:
 def create_product(
     bag_number: int,
     category: Category,
-    subcategory: Subcategory,
+    subcategories: list[Subcategory],
     variant_group: VariantGroup = None,
     is_default: bool = False,
     group_number: int = None
@@ -400,8 +460,11 @@ def create_product(
         spec_set = spec_sets[0]
         color_name = spec_set['color']['name']
     
-    # Default price
-    base_price = Decimal('199.99')
+    # Default price (override for Shoulder bags)
+    is_shoulder_bag = any(
+        sub.slug == "shoulder-bags" for sub in subcategories
+    )
+    base_price = Decimal('100') if is_shoulder_bag else Decimal('199.99')
     
     # Try to find existing product by variant_group and color, or by name pattern
     product = None
@@ -427,11 +490,10 @@ def create_product(
             name=full_product_name,
             brand='Jasmine',
             price=base_price,
-            price_new=base_price * Decimal('0.9'),  # 10% discount
-            price_old=base_price,
+            price_new=None if is_shoulder_bag else base_price * Decimal('0.9'),
+            price_old=None if is_shoulder_bag else base_price,
             availability=Product.AvailabilityChoices.IN_STOCK,
             category=category,
-            subcategory=subcategory,
             currency=Product.CurrencyChoices.USD,
             variant_group=variant_group,
             variant_color_name=color_name,
@@ -445,6 +507,10 @@ def create_product(
         # Update name if it still has color suffix
         if product.name != full_product_name and ' - ' in product.name:
             product.name = full_product_name
+        if is_shoulder_bag:
+            product.price = base_price
+            product.price_new = None
+            product.price_old = None
         # Update variant fields
         if variant_group and product.variant_group != variant_group:
             product.variant_group = variant_group
@@ -488,6 +554,9 @@ def create_product(
         
         print(f"    Added specifications")
     
+    if subcategories:
+        product.subcategories.set(subcategories)
+
     return product
 
 
@@ -497,9 +566,9 @@ def main():
     print("Product Import Script with Specifications")
     print("=" * 60)
     
-    # Create category and subcategory
+    # Create category and subcategories
     category = create_or_get_category()
-    subcategory = create_or_get_subcategory(category)
+    subcategories_by_key = create_or_get_subcategories(category)
     
     print("\nCreating variant groups and products...")
     print("-" * 60)
@@ -514,10 +583,15 @@ def main():
         # Create products for each bag in the group
         for idx, bag_number in enumerate(bag_numbers):
             is_default = (idx == 0)  # First bag is default
+            subcategory_keys = BAG_STYLE_MAP.get(bag_number, [])
+            subcategories = [
+                subcategories_by_key[key] for key in subcategory_keys
+                if key in subcategories_by_key
+            ]
             create_product(
                 bag_number=bag_number,
                 category=category,
-                subcategory=subcategory,
+                subcategories=subcategories,
                 variant_group=variant_group,
                 is_default=is_default,
                 group_number=group_idx
@@ -534,7 +608,9 @@ def main():
     print(f"  Total Products: {total_products}")
     print(f"  Total Variant Groups: {total_groups}")
     print(f"  Category: {category.name}")
-    print(f"  Subcategory: {subcategory.name}")
+    print("  Subcategories: " + ", ".join(
+        [sub.name for sub in subcategories_by_key.values()]
+    ))
 
 
 if __name__ == '__main__':

@@ -17,7 +17,7 @@ class ProductCardSerializer(serializers.Serializer):
     currency = serializers.CharField()
     image_url = serializers.CharField(allow_null=True)
     category_id = serializers.IntegerField()
-    subcategory_id = serializers.IntegerField(allow_null=True)
+    subcategory_ids = serializers.ListField(child=serializers.IntegerField())
 
 
 class HomeCarouselSectionSerializer(serializers.Serializer):

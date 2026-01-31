@@ -81,6 +81,7 @@ class ProductListView(APIView):
         # Parse query parameters
         category_id = request.query_params.get('category_id')
         subcategory_id = request.query_params.get('subcategory_id')
+        subcategory_ids_param = request.query_params.get('subcategory_ids')
         search = request.query_params.get('search')
         availability = request.query_params.get('availability')
         page = int(request.query_params.get('page', 1))
@@ -93,9 +94,18 @@ class ProductListView(APIView):
                 spec_key = key[5:]  # Remove 'spec_' prefix
                 spec_filters[spec_key] = value
         
+        subcategory_ids = None
+        if subcategory_ids_param:
+            subcategory_ids = [
+                int(val) for val in subcategory_ids_param.split(',')
+                if val.strip().isdigit()
+            ]
+        elif subcategory_id:
+            subcategory_ids = [int(subcategory_id)]
+
         list_request = ListProductsRequest(
             category_id=int(category_id) if category_id else None,
-            subcategory_id=int(subcategory_id) if subcategory_id else None,
+            subcategory_ids=subcategory_ids,
             search=search,
             availability=availability,
             spec_filters=spec_filters if spec_filters else None,

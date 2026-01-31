@@ -22,7 +22,7 @@ def _product_to_response(
     """Build ProductResponse from domain entity with related data."""
     specs_simple, specs_detailed = product_repo.get_specifications(product.id)
     
-    # Get category and subcategory
+    # Get category and subcategories
     category = category_repo.get_by_id(product.category_id) if product.category_id else None
     category_response = CategoryResponse(
         id=category.id,
@@ -31,17 +31,18 @@ def _product_to_response(
         created_at=category.created_at
     ) if category else None
     
-    subcategory_response = None
-    if product.subcategory_id:
-        subcategory = category_repo.get_subcategory_by_id(product.subcategory_id)
+    subcategory_responses: List[SubcategoryResponse] = []
+    for subcategory_id in product.subcategory_ids:
+        subcategory = category_repo.get_subcategory_by_id(subcategory_id)
         if subcategory:
-            subcategory_response = SubcategoryResponse(
+            subcategory_responses.append(SubcategoryResponse(
                 id=subcategory.id,
                 category_id=subcategory.category_id,
                 name=subcategory.name,
                 slug=subcategory.slug,
+                description=subcategory.description,
                 created_at=subcategory.created_at
-            )
+            ))
     
     # Get variant group products if product belongs to a variant group
     variant_previews = []
@@ -74,9 +75,9 @@ def _product_to_response(
         price_old=str(product.price_old) if product.price_old else None,
         availability=product.availability.value,
         category_id=product.category_id,
-        subcategory_id=product.subcategory_id,
+        subcategory_ids=product.subcategory_ids,
         category=category_response,
-        subcategory=subcategory_response,
+        subcategories=subcategory_responses,
         currency=product.currency.value,
         variant_group_id=product.variant_group_id,
         variant_color_name=product.variant_color_name,
@@ -125,6 +126,7 @@ class ListSubcategoriesByCategoryUseCase:
                 category_id=sub.category_id,
                 name=sub.name,
                 slug=sub.slug,
+                description=sub.description,
                 created_at=sub.created_at
             )
             for sub in subcategories
@@ -157,6 +159,7 @@ class ListCategoriesWithSubcategoriesUseCase:
                         category_id=sub.category_id,
                         name=sub.name,
                         slug=sub.slug,
+                        description=sub.description,
                         created_at=sub.created_at
                     )
                     for sub in subcategories
@@ -177,7 +180,7 @@ class ListProductsUseCase:
         """Execute list products."""
         products, total = self.product_repo.get_all(
             category_id=request.category_id,
-            subcategory_id=request.subcategory_id,
+            subcategory_ids=request.subcategory_ids,
             search=request.search,
             availability=request.availability,
             spec_filters=request.spec_filters,
@@ -190,7 +193,7 @@ class ListProductsUseCase:
         for product in products:
             specs_simple, specs_detailed = self.product_repo.get_specifications(product.id)
             
-            # Get category and subcategory
+            # Get category and subcategories
             category = self.category_repo.get_by_id(product.category_id) if product.category_id else None
             category_response = CategoryResponse(
                 id=category.id,
@@ -199,17 +202,18 @@ class ListProductsUseCase:
                 created_at=category.created_at
             ) if category else None
             
-            subcategory_response = None
-            if product.subcategory_id:
-                subcategory = self.category_repo.get_subcategory_by_id(product.subcategory_id)
+            subcategory_responses: List[SubcategoryResponse] = []
+            for subcategory_id in product.subcategory_ids:
+                subcategory = self.category_repo.get_subcategory_by_id(subcategory_id)
                 if subcategory:
-                    subcategory_response = SubcategoryResponse(
+                    subcategory_responses.append(SubcategoryResponse(
                         id=subcategory.id,
                         category_id=subcategory.category_id,
                         name=subcategory.name,
                         slug=subcategory.slug,
+                        description=subcategory.description,
                         created_at=subcategory.created_at
-                    )
+                    ))
             
             product_responses.append(ProductResponse(
                 id=product.id,
@@ -220,9 +224,9 @@ class ListProductsUseCase:
                 price_old=str(product.price_old) if product.price_old else None,
                 availability=product.availability.value,
                 category_id=product.category_id,
-                subcategory_id=product.subcategory_id,
+                subcategory_ids=product.subcategory_ids,
                 category=category_response,
-                subcategory=subcategory_response,
+                subcategories=subcategory_responses,
                 currency=product.currency.value,
                 variant_group_id=product.variant_group_id,
                 variant_color_name=product.variant_color_name,

@@ -65,6 +65,7 @@ class DjangoCategoryRepository(CategoryRepository):
             category_id=subcategory_model.category_id,
             name=subcategory_model.name,
             slug=subcategory_model.slug,
+            description=subcategory_model.description,
             created_at=subcategory_model.created_at
         )
     
@@ -84,7 +85,7 @@ class DjangoProductRepository(ProductRepository):
     def get_all(
         self,
         category_id: Optional[int] = None,
-        subcategory_id: Optional[int] = None,
+        subcategory_ids: Optional[List[int]] = None,
         search: Optional[str] = None,
         availability: Optional[str] = None,
         spec_filters: Optional[Dict[str, str]] = None,
@@ -92,13 +93,15 @@ class DjangoProductRepository(ProductRepository):
         page_size: int = 20
     ) -> Tuple[List[Product], int]:
         """Get all products with filters and pagination."""
-        queryset = ProductModel.objects.select_related('category', 'subcategory')
+        queryset = ProductModel.objects.select_related('category').prefetch_related(
+            'subcategories'
+        )
         
         # Apply filters
         if category_id:
             queryset = queryset.filter(category_id=category_id)
-        if subcategory_id:
-            queryset = queryset.filter(subcategory_id=subcategory_id)
+        if subcategory_ids:
+            queryset = queryset.filter(subcategories__id__in=subcategory_ids)
         if search:
             queryset = queryset.filter(
                 Q(name__icontains=search) | Q(brand__icontains=search)
@@ -145,10 +148,10 @@ class DjangoProductRepository(ProductRepository):
                     pass
         
         # Get total count before pagination
-        total = queryset.count()
+        total = queryset.distinct().count()
         
         # Paginate
-        paginator = Paginator(queryset, page_size)
+        paginator = Paginator(queryset.distinct(), page_size)
         page_obj = paginator.get_page(page)
         
         products = [self._to_domain(p) for p in page_obj]
@@ -158,8 +161,8 @@ class DjangoProductRepository(ProductRepository):
         """Get product by ID."""
         try:
             product_model = ProductModel.objects.select_related(
-                'category', 'subcategory', 'variant_group'
-            ).get(id=product_id)
+                'category', 'variant_group'
+            ).prefetch_related('subcategories').get(id=product_id)
             return self._to_domain(product_model)
         except ProductModel.DoesNotExist:
             return None
@@ -172,7 +175,9 @@ class DjangoProductRepository(ProductRepository):
         """Get all products in a variant group, excluding specified product."""
         queryset = ProductModel.objects.filter(
             variant_group_id=variant_group_id
-        ).select_related('category', 'subcategory', 'variant_group')
+        ).select_related('category', 'variant_group').prefetch_related(
+            'subcategories'
+        )
         
         if exclude_product_id:
             queryset = queryset.exclude(id=exclude_product_id)
@@ -277,7 +282,9 @@ class DjangoProductRepository(ProductRepository):
             price_old=product_model.price_old,
             availability=Availability(product_model.availability),
             category_id=product_model.category_id,
-            subcategory_id=product_model.subcategory_id,
+            subcategory_ids=list(
+                product_model.subcategories.values_list('id', flat=True)
+            ),
             currency=Currency(product_model.currency),
             variant_group_id=product_model.variant_group_id,
             variant_color_name=product_model.variant_color_name,

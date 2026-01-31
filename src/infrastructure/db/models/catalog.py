@@ -26,6 +26,7 @@ class Subcategory(models.Model):
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='subcategories')
     name = models.CharField(max_length=200, db_index=True)
     slug = models.SlugField(max_length=200)
+    description = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -82,7 +83,7 @@ class Product(models.Model):
     price_old = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, validators=[MinValueValidator(Decimal('0'))])
     availability = models.CharField(max_length=20, choices=AvailabilityChoices.choices, default=AvailabilityChoices.IN_STOCK)
     category = models.ForeignKey(Category, on_delete=models.PROTECT, related_name='products')
-    subcategory = models.ForeignKey(Subcategory, on_delete=models.PROTECT, related_name='products', blank=True, null=True)
+    subcategories = models.ManyToManyField(Subcategory, related_name='products', blank=True)
     currency = models.CharField(max_length=3, choices=CurrencyChoices.choices, default=CurrencyChoices.USD)
     variant_group = models.ForeignKey(
         VariantGroup,
@@ -104,7 +105,6 @@ class Product(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['category', 'availability']),
-            models.Index(fields=['subcategory', 'availability']),
         ]
     
     def __str__(self):

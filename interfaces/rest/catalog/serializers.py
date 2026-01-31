@@ -24,6 +24,7 @@ class SubcategoryResponseSerializer(serializers.Serializer):
     category_id = serializers.IntegerField()
     name = serializers.CharField()
     slug = serializers.CharField()
+    description = serializers.CharField(allow_null=True)
     created_at = serializers.DateTimeField()
 
 
@@ -67,9 +68,9 @@ class ProductResponseSerializer(serializers.Serializer):
     price_old = serializers.CharField(allow_null=True)
     availability = serializers.CharField()
     category_id = serializers.IntegerField()
-    subcategory_id = serializers.IntegerField(allow_null=True)
+    subcategory_ids = serializers.ListField(child=serializers.IntegerField())
     category = CategoryResponseSerializer(allow_null=True)
-    subcategory = SubcategoryResponseSerializer(allow_null=True)
+    subcategories = SubcategoryResponseSerializer(many=True)
     currency = serializers.CharField()
     variant_group_id = serializers.IntegerField(allow_null=True)
     variant_color_name = serializers.CharField(allow_null=True)
