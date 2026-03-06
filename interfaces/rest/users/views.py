@@ -1,8 +1,12 @@
 """User views."""
-from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework_simplejwt.views import TokenRefreshView
+from django.conf import settings
+from django.middleware.csrf import get_token
 from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from src.application.users.use_cases import (
     RegisterUserUseCase, LoginUserUseCase, GetMeUseCase, UpdateProfileUseCase,
@@ -17,11 +21,17 @@ from src.infrastructure.services.password_hasher import PasswordHasher
 from src.infrastructure.services.token_service import TokenService
 from src.domain.shared.exceptions import DomainException, ValidationError, NotFoundError
 from interfaces.rest.users.serializers import (
-    RegisterSerializer, LoginSerializer, TokenResponseSerializer,
+    RegisterSerializer, LoginSerializer,
     UserResponseSerializer, UpdateProfileSerializer,
     AddressRequestSerializer, AddressResponseSerializer
 )
 from interfaces.rest.shared.responses import success_response, error_response
+from interfaces.rest.shared.authentication import enforce_csrf
+from interfaces.rest.shared.auth_cookies import (
+    set_access_cookie,
+    set_refresh_cookie,
+    clear_auth_cookies,
+)
 
 
 # Initialize dependencies
@@ -34,6 +44,7 @@ _token_service = TokenService()
 class RegisterView(APIView):
     """Register view."""
     permission_classes = [AllowAny]
+    authentication_classes = []
     
     def post(self, request):
         """Register a new user."""
@@ -48,11 +59,18 @@ class RegisterView(APIView):
         try:
             use_case = RegisterUserUseCase(_user_repo, _password_hasher, _token_service)
             user_response, tokens = use_case.execute(serializer.validated_data)
-            
-            return success_response({
-                'user': UserResponseSerializer(user_response).data,
-                'tokens': TokenResponseSerializer(tokens).data
-            }, status=status.HTTP_201_CREATED)
+
+            response = success_response(
+                {
+                    'user': UserResponseSerializer(user_response).data,
+                    'authenticated': True,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+            set_access_cookie(response, tokens.access)
+            set_refresh_cookie(response, tokens.refresh)
+            get_token(request)
+            return response
         except ValidationError as e:
             return error_response(str(e), status=status.HTTP_400_BAD_REQUEST)
         except DomainException as e:
@@ -62,6 +80,7 @@ class RegisterView(APIView):
 class LoginView(APIView):
     """Login view."""
     permission_classes = [AllowAny]
+    authentication_classes = []
     
     def post(self, request):
         """Login user."""
@@ -76,19 +95,83 @@ class LoginView(APIView):
         try:
             use_case = LoginUserUseCase(_user_repo, _password_hasher, _token_service)
             tokens = use_case.execute(serializer.validated_data)
-            
-            return success_response({
-                'tokens': TokenResponseSerializer(tokens).data
+            user = _user_repo.get_by_email(serializer.validated_data.email)
+            user_response = GetMeUseCase(_user_repo).execute(user.id) if user else None
+
+            response = success_response({
+                'user': UserResponseSerializer(user_response).data if user_response else None,
+                'authenticated': True,
             })
+            set_access_cookie(response, tokens.access)
+            set_refresh_cookie(response, tokens.refresh)
+            get_token(request)
+            return response
         except ValidationError as e:
             return error_response(str(e), status=status.HTTP_401_UNAUTHORIZED)
         except DomainException as e:
             return error_response(str(e), status=status.HTTP_401_UNAUTHORIZED)
 
 
-class RefreshTokenView(TokenRefreshView):
+class RefreshTokenView(APIView):
     """Refresh token view."""
     permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        """Refresh access (and optionally refresh) tokens."""
+        enforce_csrf(request)
+        refresh_token = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME)
+        if not refresh_token:
+            response = error_response(
+                "Refresh token missing",
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+            clear_auth_cookies(response)
+            return response
+
+        serializer = TokenRefreshSerializer(
+            data={'refresh': refresh_token},
+            context={'request': request},
+        )
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError:
+            response = error_response(
+                "Invalid refresh token",
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+            clear_auth_cookies(response)
+            return response
+
+        access = serializer.validated_data.get('access')
+        new_refresh = serializer.validated_data.get('refresh', refresh_token)
+
+        response = success_response({'ok': True})
+        if access:
+            set_access_cookie(response, access)
+        if new_refresh:
+            set_refresh_cookie(response, new_refresh)
+        return response
+
+
+class LogoutView(APIView):
+    """Logout view."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        """Logout user and clear cookies."""
+        enforce_csrf(request)
+        refresh_token = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME)
+        if refresh_token:
+            try:
+                RefreshToken(refresh_token).blacklist()
+            except (TokenError, AttributeError, NotImplementedError):
+                pass
+
+        response = success_response({'ok': True})
+        clear_auth_cookies(response)
+        return response
 
 
 class MeView(APIView):
@@ -210,4 +293,3 @@ class SetDefaultAddressView(APIView):
             return error_response(str(e), status=status.HTTP_404_NOT_FOUND)
         except DomainException as e:
             return error_response(str(e), status=status.HTTP_400_BAD_REQUEST)
-

@@ -1,7 +1,7 @@
 """User URLs."""
 from django.urls import path
 from interfaces.rest.users.views import (
-    RegisterView, LoginView, RefreshTokenView, MeView,
+    RegisterView, LoginView, RefreshTokenView, LogoutView, MeView,
     AddressListView, AddressDetailView, SetDefaultAddressView
 )
 
@@ -9,6 +9,8 @@ urlpatterns = [
     path('auth/register/', RegisterView.as_view(), name='register'),
     path('auth/login/', LoginView.as_view(), name='login'),
     path('auth/refresh/', RefreshTokenView.as_view(), name='refresh'),
+    path('auth/logout/', LogoutView.as_view(), name='logout'),
+    path('auth/me/', MeView.as_view(), name='auth-me'),
     path('me/', MeView.as_view(), name='me'),
     path('addresses/', AddressListView.as_view(), name='address-list'),
     path('addresses/<int:address_id>/', AddressDetailView.as_view(), name='address-detail'),

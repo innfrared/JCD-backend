@@ -3,24 +3,24 @@ Django settings for jasmine_backend project.
 """
 import os
 from pathlib import Path
+from datetime import timedelta
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me-in-production')
-
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
-CSRF_TRUSTED_ORIGINS = (
-    os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
-    if os.environ.get('CSRF_TRUSTED_ORIGINS')
-    else []
-)
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get(
+        'ALLOWED_HOSTS',
+        'localhost,127.0.0.1,jcd-backend.onrender.com'
+    ).split(',')
+    if host.strip()
+]
 
-# Application definition
+APPEND_SLASH = False
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -30,12 +30,12 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'src.infrastructure.db',
     'storages',
 ]
 
-# Custom user model
 AUTH_USER_MODEL = 'db.User'
 
 MIDDLEWARE = [
@@ -69,59 +69,45 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# Database
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
 if DATABASE_URL:
     import dj_database_url
 
     DATABASES = {
-        "default": dj_database_url.parse(
+        'default': dj_database_url.parse(
             DATABASE_URL,
             ssl_require=True,
         )
     }
 
-    if "pooler.supabase.com" in DATABASE_URL:
-        DATABASES["default"]["CONN_MAX_AGE"] = 0
+    if 'pooler.supabase.com' in DATABASE_URL:
+        DATABASES['default']['CONN_MAX_AGE'] = 0
     else:
-        DATABASES["default"]["CONN_MAX_AGE"] = 600
-
+        DATABASES['default']['CONN_MAX_AGE'] = 600
 else:
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
 
-# Password validation
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-# Internationalization
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# Media files
 USE_SUPABASE_S3_MEDIA = os.environ.get('USE_SUPABASE_S3_MEDIA', 'False') == 'True'
 
 if USE_SUPABASE_S3_MEDIA:
@@ -130,34 +116,28 @@ if USE_SUPABASE_S3_MEDIA:
     SUPABASE_PROJECT_ID = os.environ['SUPABASE_PROJECT_ID']
     SUPABASE_BUCKET = os.environ.get('SUPABASE_BUCKET', 'media')
 
-    AWS_S3_ENDPOINT_URL = (
-        f"https://{SUPABASE_PROJECT_ID}.supabase.co/storage/v1/s3"
-    )
-
+    AWS_S3_ENDPOINT_URL = f'https://{SUPABASE_PROJECT_ID}.supabase.co/storage/v1/s3'
     AWS_ACCESS_KEY_ID = os.environ['SUPABASE_S3_ACCESS_KEY']
     AWS_SECRET_ACCESS_KEY = os.environ['SUPABASE_S3_SECRET_KEY']
-
     AWS_STORAGE_BUCKET_NAME = SUPABASE_BUCKET
     AWS_S3_REGION_NAME = 'us-east-1'
     AWS_S3_SIGNATURE_VERSION = 's3v4'
-
     AWS_DEFAULT_ACL = None
     AWS_QUERYSTRING_AUTH = False
 
     MEDIA_URL = (
-        f"https://{SUPABASE_PROJECT_ID}.supabase.co/storage/v1/object/public/"
-        f"{SUPABASE_BUCKET}/"
+        f'https://{SUPABASE_PROJECT_ID}.supabase.co/storage/v1/object/public/'
+        f'{SUPABASE_BUCKET}/'
     )
 else:
     MEDIA_URL = '/media/'
     MEDIA_ROOT = BASE_DIR / 'media'
 
-# Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
+        'interfaces.rest.shared.authentication.CookieJWTAuthentication',
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
@@ -170,26 +150,40 @@ REST_FRAMEWORK = {
     ),
 }
 
-# JWT Settings
-from datetime import timedelta
-
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(
+        minutes=int(os.environ.get('SIMPLE_JWT_ACCESS_MINUTES', '15'))
+    ),
+    'REFRESH_TOKEN_LIFETIME': timedelta(
+        days=int(os.environ.get('SIMPLE_JWT_REFRESH_DAYS', '7'))
+    ),
     'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
 }
 
-# CORS
-# For development, allow all origins. For production, set CORS_ALLOWED_ORIGINS env var
-CORS_ALLOW_ALL_ORIGINS = os.environ.get('CORS_ALLOW_ALL_ORIGINS', 'True') == 'True'
+AUTH_COOKIE_SECURE = os.environ.get('AUTH_COOKIE_SECURE', 'False') == 'True'
+AUTH_COOKIE_SAMESITE = os.environ.get('AUTH_COOKIE_SAMESITE', 'Lax')
+AUTH_COOKIE_DOMAIN = os.environ.get('AUTH_COOKIE_DOMAIN') or None
+AUTH_ACCESS_COOKIE_NAME = os.environ.get('AUTH_ACCESS_COOKIE_NAME', 'jc_access')
+AUTH_REFRESH_COOKIE_NAME = os.environ.get('AUTH_REFRESH_COOKIE_NAME', 'jc_refresh')
+AUTH_ACCESS_COOKIE_PATH = os.environ.get('AUTH_ACCESS_COOKIE_PATH', '/')
+AUTH_REFRESH_COOKIE_PATH = os.environ.get('AUTH_REFRESH_COOKIE_PATH', '/api/auth/')
 
-if not CORS_ALLOW_ALL_ORIGINS:
-    CORS_ALLOWED_ORIGINS = os.environ.get(
-        'CORS_ALLOWED_ORIGINS',
-        'http://localhost:3000,http://localhost:3001'
+FRONTEND_ORIGIN = os.environ.get('FRONTEND_ORIGIN')
+FRONTEND_ORIGINS = [
+    origin.strip()
+    for origin in (
+        os.environ.get('FRONTEND_ORIGINS')
+        or FRONTEND_ORIGIN
+        or 'http://localhost:3000,http://localhost:5173'
     ).split(',')
+    if origin.strip()
+]
 
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = FRONTEND_ORIGINS
 CORS_ALLOW_CREDENTIALS = True
+
 CORS_ALLOW_METHODS = [
     'DELETE',
     'GET',
@@ -198,6 +192,7 @@ CORS_ALLOW_METHODS = [
     'POST',
     'PUT',
 ]
+
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -210,3 +205,12 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
+] or FRONTEND_ORIGINS
+
+CSRF_COOKIE_SECURE = AUTH_COOKIE_SECURE
+CSRF_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
+CSRF_COOKIE_DOMAIN = AUTH_COOKIE_DOMAIN
