@@ -6,7 +6,22 @@ from src.application.users.dto import (
 )
 
 
-class RegisterSerializer(serializers.Serializer):
+class StrictInputSerializer(serializers.Serializer):
+    """Serializer that rejects unknown payload keys explicitly."""
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict):
+            return super().to_internal_value(data)
+
+        unknown_fields = set(data.keys()) - set(self.fields.keys())
+        if unknown_fields:
+            raise serializers.ValidationError({
+                field: ['This field is not allowed.'] for field in sorted(unknown_fields)
+            })
+        return super().to_internal_value(data)
+
+
+class RegisterSerializer(StrictInputSerializer):
     """Register serializer."""
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
@@ -26,7 +41,7 @@ class RegisterSerializer(serializers.Serializer):
         )
 
 
-class LoginSerializer(serializers.Serializer):
+class LoginSerializer(StrictInputSerializer):
     """Login serializer."""
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
@@ -57,7 +72,7 @@ class UserResponseSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
 
 
-class UpdateProfileSerializer(serializers.Serializer):
+class UpdateProfileSerializer(StrictInputSerializer):
     """Update profile serializer."""
     first_name = serializers.CharField(required=False, allow_null=True)
     last_name = serializers.CharField(required=False, allow_null=True)
@@ -73,7 +88,7 @@ class UpdateProfileSerializer(serializers.Serializer):
         )
 
 
-class AddressRequestSerializer(serializers.Serializer):
+class AddressRequestSerializer(StrictInputSerializer):
     """Address request serializer."""
     label = serializers.CharField()
     full_name = serializers.CharField()

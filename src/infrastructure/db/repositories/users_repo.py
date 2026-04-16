@@ -111,9 +111,9 @@ class DjangoAddressRepository(AddressRepository):
         address_model.save()
         return self._to_domain(address_model)
     
-    def delete(self, address_id: int) -> None:
+    def delete(self, user_id: int, address_id: int) -> None:
         """Delete address."""
-        AddressModel.objects.filter(id=address_id).delete()
+        AddressModel.objects.filter(id=address_id, user_id=user_id).delete()
     
     def set_default(self, user_id: int, address_id: int) -> None:
         """Set default address for user."""

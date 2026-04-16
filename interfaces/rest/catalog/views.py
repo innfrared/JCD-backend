@@ -1,18 +1,20 @@
 """Catalog views."""
+import re
+
 from django.conf import settings
 from django.core.cache import cache
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework import status
 
 from src.application.catalog.use_cases import (
     ListCategoriesUseCase,
     ListCategoriesWithSubcategoriesUseCase,
     ListSubcategoriesByCategoryUseCase,
-    ListProductsUseCase,
-    GetProductUseCase,
 )
 from src.application.catalog.ports import CategoryRepository, ProductRepository
+from src.domain.shared.types import Availability
 from src.infrastructure.db.repositories.catalog_repo import (
     DjangoCategoryRepository, DjangoProductRepository
 )
@@ -29,12 +31,96 @@ from src.infrastructure.cache.storefront_cache import (
     categories_all_cache_key,
     categories_cache_key,
     product_detail_cache_key,
+    product_list_default_cache_key,
 )
+from src.infrastructure.db import catalog_hot_reads as catalog_hot_reads
 
 
 # Initialize dependencies
 _category_repo: CategoryRepository = DjangoCategoryRepository()
 _product_repo: ProductRepository = DjangoProductRepository()
+MAX_PAGE_SIZE = 60
+MAX_SEARCH_LENGTH = 120
+MAX_SPEC_FILTERS = 12
+MAX_SUBCATEGORY_SLUGS = 10
+SLUG_PATTERN = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
+ALLOWED_AVAILABILITY = {item.value for item in Availability}
+
+
+def _parse_int_param(query_params, name: str, default=None, min_value=None, max_value=None):
+    raw_value = query_params.get(name)
+    if raw_value in (None, ''):
+        return default
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(f'Invalid integer value for "{name}"')
+
+    if min_value is not None and value < min_value:
+        raise ValueError(f'"{name}" must be at least {min_value}')
+    if max_value is not None and value > max_value:
+        raise ValueError(f'"{name}" must be at most {max_value}')
+    return value
+
+
+def _parse_bool_param(query_params, name: str, default: bool = False) -> bool:
+    raw_value = query_params.get(name)
+    if raw_value is None:
+        return default
+    normalized = str(raw_value).strip().lower()
+    if normalized in ('true', '1', 'yes'):
+        return True
+    if normalized in ('false', '0', 'no'):
+        return False
+    raise ValueError(f'Invalid boolean value for "{name}"')
+
+
+def _parse_slug_filter(raw_slug: str, field_name: str) -> str:
+    slug = raw_slug.strip()
+    if not slug:
+        raise ValueError(f'"{field_name}" cannot be empty')
+    if not SLUG_PATTERN.match(slug):
+        raise ValueError(f'Invalid slug format in "{field_name}"')
+    return slug
+
+
+def _parse_subcategory_slugs(query_params):
+    subcategory_slug = query_params.get('subcategory_slug')
+    subcategory_slugs_param = query_params.get('subcategory_slugs')
+
+    if subcategory_slugs_param:
+        slugs = [
+            _parse_slug_filter(raw_slug, 'subcategory_slugs')
+            for raw_slug in subcategory_slugs_param.split(',')
+            if raw_slug.strip()
+        ]
+        if not slugs:
+            raise ValueError('"subcategory_slugs" must include at least one slug')
+        if len(slugs) > MAX_SUBCATEGORY_SLUGS:
+            raise ValueError(
+                f'"subcategory_slugs" supports up to {MAX_SUBCATEGORY_SLUGS} slugs'
+            )
+        return slugs
+
+    if subcategory_slug:
+        return [_parse_slug_filter(subcategory_slug, 'subcategory_slug')]
+    return None
+
+
+def _parse_spec_filters(query_params):
+    spec_filters = {}
+    for key, value in query_params.items():
+        if not key.startswith('spec_'):
+            continue
+        spec_key = key[5:]
+        if not spec_key:
+            raise ValueError('Invalid spec filter key')
+        if len(spec_filters) >= MAX_SPEC_FILTERS:
+            raise ValueError(
+                f'A maximum of {MAX_SPEC_FILTERS} spec filters is allowed'
+            )
+        spec_filters[spec_key] = value
+    return spec_filters or None
 
 
 class CategoryListView(APIView):
@@ -93,79 +179,205 @@ class SubcategoryListByCategoryView(APIView):
         ])
 
 
+def _is_default_product_list_cacheable(
+    *,
+    category_id,
+    subcategory_ids,
+    subcategory_slugs,
+    search,
+    availability,
+    spec_filters,
+    page,
+    page_size,
+    include_detailed_specs,
+) -> bool:
+    """Only cache the unfiltered first page at default page size (safe public key)."""
+    if include_detailed_specs:
+        return False
+    if page != 1 or page_size != 20:
+        return False
+    if category_id is not None:
+        return False
+    if subcategory_ids or subcategory_slugs:
+        return False
+    if search or availability or spec_filters:
+        return False
+    return True
+
+
 class ProductListView(APIView):
     """Product list view."""
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'catalog_list'
     
     def get(self, request):
         """List products."""
         from src.application.catalog.dto import ListProductsRequest
-        
-        # Parse query parameters
-        category_id = request.query_params.get('category_id')
-        subcategory_id = request.query_params.get('subcategory_id')
-        subcategory_ids_param = request.query_params.get('subcategory_ids')
-        subcategory_slug = request.query_params.get('subcategory_slug')
-        subcategory_slugs_param = request.query_params.get('subcategory_slugs')
-        search = request.query_params.get('search')
-        availability = request.query_params.get('availability')
-        page = max(int(request.query_params.get('page', 1)), 1)
-        requested_page_size = int(request.query_params.get('page_size', 20))
-        page_size = min(max(requested_page_size, 1), 60)
-        include_detailed_specs = (
-            request.query_params.get('include_detailed_specs', 'false').lower()
-            in ('true', '1', 'yes')
-        )
-        
-        # Parse spec filters (e.g., ?spec_material=leather&spec_strap_length_cm=110)
-        spec_filters = {}
-        for key, value in request.query_params.items():
-            if key.startswith('spec_'):
-                spec_key = key[5:]  # Remove 'spec_' prefix
-                spec_filters[spec_key] = value
-        
-        subcategory_ids = None
-        subcategory_slugs = None
-        if subcategory_ids_param:
-            subcategory_ids = [
-                int(val) for val in subcategory_ids_param.split(',')
-                if val.strip().isdigit()
-            ]
-        elif subcategory_id:
-            subcategory_ids = [int(subcategory_id)]
 
-        if subcategory_slugs_param:
-            subcategory_slugs = [
-                val.strip() for val in subcategory_slugs_param.split(',')
-                if val.strip()
-            ]
-        elif subcategory_slug:
-            subcategory_slugs = [subcategory_slug.strip()]
+        try:
+            category_id = _parse_int_param(
+                request.query_params,
+                'category_id',
+                default=None,
+                min_value=1,
+            )
+            subcategory_id = _parse_int_param(
+                request.query_params,
+                'subcategory_id',
+                default=None,
+                min_value=1,
+            )
+            page = _parse_int_param(
+                request.query_params,
+                'page',
+                default=1,
+                min_value=1,
+            )
+            page_size = _parse_int_param(
+                request.query_params,
+                'page_size',
+                default=20,
+                min_value=1,
+                max_value=MAX_PAGE_SIZE,
+            )
+            include_detailed_specs = _parse_bool_param(
+                request.query_params,
+                'include_detailed_specs',
+                default=False,
+            )
+            search = request.query_params.get('search')
+            if search and len(search) > MAX_SEARCH_LENGTH:
+                raise ValueError(
+                    f'"search" must be at most {MAX_SEARCH_LENGTH} characters'
+                )
+
+            availability = request.query_params.get('availability')
+            if availability and availability not in ALLOWED_AVAILABILITY:
+                raise ValueError(
+                    f'Invalid "availability". Allowed values: {", ".join(sorted(ALLOWED_AVAILABILITY))}'
+                )
+
+            spec_filters = _parse_spec_filters(request.query_params)
+            subcategory_slugs = _parse_subcategory_slugs(request.query_params)
+
+            subcategory_ids_param = request.query_params.get('subcategory_ids')
+            subcategory_ids = None
+            if subcategory_ids_param:
+                subcategory_ids = []
+                for value in subcategory_ids_param.split(','):
+                    normalized = value.strip()
+                    if not normalized:
+                        continue
+                    try:
+                        parsed_id = int(normalized)
+                    except ValueError:
+                        raise ValueError('Invalid "subcategory_ids" value')
+                    if parsed_id < 1:
+                        raise ValueError('"subcategory_ids" values must be positive')
+                    subcategory_ids.append(parsed_id)
+                if not subcategory_ids:
+                    raise ValueError('"subcategory_ids" must include at least one id')
+            elif subcategory_id:
+                subcategory_ids = [subcategory_id]
+        except ValueError as exc:
+            return error_response(str(exc), status=status.HTTP_400_BAD_REQUEST)
 
         list_request = ListProductsRequest(
-            category_id=int(category_id) if category_id else None,
+            category_id=category_id,
             subcategory_ids=subcategory_ids,
             subcategory_slugs=subcategory_slugs,
             search=search,
             availability=availability,
-            spec_filters=spec_filters if spec_filters else None,
+            spec_filters=spec_filters,
             page=page,
             page_size=page_size,
             include_detailed_specs=include_detailed_specs,
         )
-        
-        use_case = ListProductsUseCase(_product_repo, _category_repo)
-        result = use_case.execute(list_request)
-        
-        return success_response(PaginatedProductResponseSerializer({
-            'items': result.items,
-            'total': result.total,
-            'page': result.page,
-            'page_size': result.page_size,
-            'total_pages': result.total_pages,
-            'has_next': result.has_next,
-            'has_previous': result.has_previous
-        }).data)
+
+        if _is_default_product_list_cacheable(
+            category_id=list_request.category_id,
+            subcategory_ids=list_request.subcategory_ids,
+            subcategory_slugs=list_request.subcategory_slugs,
+            search=list_request.search,
+            availability=list_request.availability,
+            spec_filters=list_request.spec_filters,
+            page=list_request.page,
+            page_size=list_request.page_size,
+            include_detailed_specs=list_request.include_detailed_specs,
+        ):
+            cache_key = product_list_default_cache_key()
+            cached_payload = cache.get(cache_key)
+            if cached_payload is not None:
+                return success_response(cached_payload)
+
+        resolved_subcategory_ids = catalog_hot_reads.resolve_list_subcategory_ids(
+            _category_repo,
+            list_request.category_id,
+            list_request.subcategory_slugs,
+            list_request.subcategory_ids,
+        )
+
+        qs = catalog_hot_reads.build_product_list_queryset(
+            category_id=list_request.category_id,
+            subcategory_ids=resolved_subcategory_ids,
+            search=list_request.search,
+            availability=list_request.availability,
+            spec_filters=list_request.spec_filters,
+        )
+        rows, total = catalog_hot_reads.paginate_product_queryset(
+            qs, list_request.page, list_request.page_size
+        )
+
+        specifications_map = None
+        if list_request.include_detailed_specs:
+            ids = [p.id for p in rows if p.id]
+            specifications_map = _product_repo.get_specifications_batch(
+                ids, include_detailed=True
+            )
+
+        items = catalog_hot_reads.product_rows_to_card_dicts(
+            rows,
+            specifications_map,
+            list_request.include_detailed_specs,
+        )
+
+        total_pages = (
+            (total + list_request.page_size - 1) // list_request.page_size
+            if list_request.page_size
+            else 0
+        )
+        has_next = list_request.page < total_pages if total_pages else False
+        has_previous = list_request.page > 1
+
+        payload = PaginatedProductResponseSerializer({
+            'items': items,
+            'total': total,
+            'page': list_request.page,
+            'page_size': list_request.page_size,
+            'total_pages': total_pages,
+            'has_next': has_next,
+            'has_previous': has_previous,
+        }).data
+
+        if _is_default_product_list_cacheable(
+            category_id=list_request.category_id,
+            subcategory_ids=list_request.subcategory_ids,
+            subcategory_slugs=list_request.subcategory_slugs,
+            search=list_request.search,
+            availability=list_request.availability,
+            spec_filters=list_request.spec_filters,
+            page=list_request.page,
+            page_size=list_request.page_size,
+            include_detailed_specs=list_request.include_detailed_specs,
+        ):
+            cache.set(
+                product_list_default_cache_key(),
+                payload,
+                timeout=settings.CACHE_TIMEOUT,
+            )
+
+        return success_response(payload)
 
 
 class ProductDetailView(APIView):
@@ -187,9 +399,18 @@ class ProductDetailView(APIView):
             if cached_payload is not None:
                 return success_response(cached_payload)
 
-            use_case = GetProductUseCase(_product_repo, _category_repo)
-            product = use_case.execute(product_id)
-            payload = ProductResponseSerializer(product).data
+            product = catalog_hot_reads.load_product_detail_orm(int(product_id))
+            specs_map = _product_repo.get_specifications_batch(
+                [int(product_id)], include_detailed=include_detailed_specs
+            )
+            specs_simple, specs_detailed = specs_map.get(
+                int(product_id), ({}, [])
+            )
+            payload = ProductResponseSerializer(
+                catalog_hot_reads.build_product_detail_payload(
+                    product, specs_simple, specs_detailed
+                )
+            ).data
             cache.set(cache_key, payload, timeout=settings.CACHE_TIMEOUT)
             return success_response(payload)
         except NotFoundError as e:

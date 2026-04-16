@@ -3,6 +3,7 @@ from django.conf import settings
 from django.middleware.csrf import get_token
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
@@ -19,7 +20,12 @@ from src.infrastructure.db.repositories.users_repo import (
 )
 from src.infrastructure.services.password_hasher import PasswordHasher
 from src.infrastructure.services.token_service import TokenService
-from src.domain.shared.exceptions import DomainException, ValidationError, NotFoundError
+from src.domain.shared.exceptions import (
+    DomainException,
+    ValidationError,
+    NotFoundError,
+    BusinessRuleViolation,
+)
 from interfaces.rest.users.serializers import (
     RegisterSerializer, LoginSerializer,
     UserResponseSerializer, UpdateProfileSerializer,
@@ -45,6 +51,8 @@ class RegisterView(APIView):
     """Register view."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_register'
     
     def post(self, request):
         """Register a new user."""
@@ -71,8 +79,11 @@ class RegisterView(APIView):
             set_refresh_cookie(response, tokens.refresh)
             get_token(request)
             return response
-        except ValidationError as e:
-            return error_response(str(e), status=status.HTTP_400_BAD_REQUEST)
+        except ValidationError:
+            return error_response(
+                'Unable to register with provided details',
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except DomainException as e:
             return error_response(str(e), status=status.HTTP_400_BAD_REQUEST)
 
@@ -81,6 +92,8 @@ class LoginView(APIView):
     """Login view."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_login'
     
     def post(self, request):
         """Login user."""
@@ -116,6 +129,8 @@ class RefreshTokenView(APIView):
     """Refresh token view."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_refresh'
 
     def post(self, request):
         """Refresh access (and optionally refresh) tokens."""
@@ -158,6 +173,8 @@ class LogoutView(APIView):
     """Logout view."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_logout'
 
     def post(self, request):
         """Logout user and clear cookies."""
@@ -259,6 +276,8 @@ class AddressDetailView(APIView):
             return success_response(AddressResponseSerializer(address_response).data)
         except NotFoundError as e:
             return error_response(str(e), status=status.HTTP_404_NOT_FOUND)
+        except BusinessRuleViolation:
+            return error_response('Address not found', status=status.HTTP_404_NOT_FOUND)
         except DomainException as e:
             return error_response(str(e), status=status.HTTP_400_BAD_REQUEST)
     
@@ -270,6 +289,8 @@ class AddressDetailView(APIView):
             return success_response({'message': 'Address deleted'}, status=status.HTTP_204_NO_CONTENT)
         except NotFoundError as e:
             return error_response(str(e), status=status.HTTP_404_NOT_FOUND)
+        except BusinessRuleViolation:
+            return error_response('Address not found', status=status.HTTP_404_NOT_FOUND)
         except DomainException as e:
             return error_response(str(e), status=status.HTTP_400_BAD_REQUEST)
 
@@ -286,5 +307,7 @@ class SetDefaultAddressView(APIView):
             return success_response({'message': 'Default address updated'})
         except NotFoundError as e:
             return error_response(str(e), status=status.HTTP_404_NOT_FOUND)
+        except BusinessRuleViolation:
+            return error_response('Address not found', status=status.HTTP_404_NOT_FOUND)
         except DomainException as e:
             return error_response(str(e), status=status.HTTP_400_BAD_REQUEST)

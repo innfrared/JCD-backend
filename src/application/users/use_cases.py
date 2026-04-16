@@ -248,7 +248,7 @@ class DeleteAddressUseCase:
         
         ensure_user_owns_address(user_id, address.user_id)
         
-        self.address_repo.delete(address_id)
+        self.address_repo.delete(user_id, address_id)
 
 
 class SetDefaultAddressUseCase:

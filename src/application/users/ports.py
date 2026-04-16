@@ -52,7 +52,7 @@ class AddressRepository(ABC):
         pass
     
     @abstractmethod
-    def delete(self, address_id: int) -> None:
+    def delete(self, user_id: int, address_id: int) -> None:
         """Delete address."""
         pass
     

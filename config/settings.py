@@ -7,8 +7,13 @@ from datetime import timedelta
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me-in-production')
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = 'django-insecure-dev-only-key'
+    else:
+        raise RuntimeError('SECRET_KEY environment variable is required when DEBUG=False')
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -40,6 +45,7 @@ AUTH_USER_MODEL = 'db.User'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'config.security_middleware.SecurityHeadersMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -81,10 +87,19 @@ if DATABASE_URL:
         )
     }
 
-    if 'pooler.supabase.com' in DATABASE_URL:
-        DATABASES['default']['CONN_MAX_AGE'] = 0
+    # PgBouncer (transaction pooler): persistent connections + no server-side cursors.
+    db_conn_max_age = os.environ.get('DB_CONN_MAX_AGE')
+    if db_conn_max_age is not None:
+        DATABASES['default']['CONN_MAX_AGE'] = int(db_conn_max_age)
+    elif 'pooler.supabase.com' in DATABASE_URL:
+        DATABASES['default']['CONN_MAX_AGE'] = 60
     else:
         DATABASES['default']['CONN_MAX_AGE'] = 600
+
+    if 'pooler.supabase.com' in DATABASE_URL:
+        DATABASES['default']['DISABLE_SERVER_SIDE_CURSORS'] = (
+            os.environ.get('DB_DISABLE_SERVER_SIDE_CURSORS', 'True') == 'True'
+        )
 else:
     DATABASES = {
         'default': {
@@ -169,6 +184,21 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
     ),
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': os.environ.get('DRF_THROTTLE_ANON', '120/min'),
+        'user': os.environ.get('DRF_THROTTLE_USER', '600/min'),
+        'auth_login': os.environ.get('DRF_THROTTLE_AUTH_LOGIN', '10/min'),
+        'auth_register': os.environ.get('DRF_THROTTLE_AUTH_REGISTER', '5/min'),
+        'auth_refresh': os.environ.get('DRF_THROTTLE_AUTH_REFRESH', '30/min'),
+        'auth_logout': os.environ.get('DRF_THROTTLE_AUTH_LOGOUT', '30/min'),
+        'catalog_list': os.environ.get('DRF_THROTTLE_CATALOG_LIST', '120/min'),
+        'homepage': os.environ.get('DRF_THROTTLE_HOMEPAGE', '120/min'),
+    },
 }
 
 SIMPLE_JWT = {
@@ -182,8 +212,14 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
 }
 
-AUTH_COOKIE_SECURE = os.environ.get('AUTH_COOKIE_SECURE', 'False') == 'True'
-AUTH_COOKIE_SAMESITE = os.environ.get('AUTH_COOKIE_SAMESITE', 'Lax')
+AUTH_COOKIE_SECURE = os.environ.get(
+    'AUTH_COOKIE_SECURE',
+    'True' if not DEBUG else 'False',
+) == 'True'
+AUTH_COOKIE_SAMESITE = os.environ.get(
+    'AUTH_COOKIE_SAMESITE',
+    'None' if not DEBUG else 'Lax',
+)
 AUTH_COOKIE_DOMAIN = os.environ.get('AUTH_COOKIE_DOMAIN') or None
 AUTH_ACCESS_COOKIE_NAME = os.environ.get('AUTH_ACCESS_COOKIE_NAME', 'jc_access')
 AUTH_REFRESH_COOKIE_NAME = os.environ.get('AUTH_REFRESH_COOKIE_NAME', 'jc_refresh')
@@ -204,6 +240,11 @@ FRONTEND_ORIGINS = [
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = FRONTEND_ORIGINS
 CORS_ALLOW_CREDENTIALS = True
+
+if CORS_ALLOW_CREDENTIALS and ('*' in CORS_ALLOWED_ORIGINS or CORS_ALLOW_ALL_ORIGINS):
+    raise RuntimeError(
+        'Credentialed CORS requests require explicit origins; wildcard is not allowed.'
+    )
 
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -235,3 +276,47 @@ CSRF_TRUSTED_ORIGINS = [
 CSRF_COOKIE_SECURE = AUTH_COOKIE_SECURE
 CSRF_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
 CSRF_COOKIE_DOMAIN = AUTH_COOKIE_DOMAIN
+SESSION_COOKIE_SECURE = AUTH_COOKIE_SECURE
+SESSION_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
+SESSION_COOKIE_DOMAIN = AUTH_COOKIE_DOMAIN
+
+if AUTH_COOKIE_SAMESITE == 'None' and not AUTH_COOKIE_SECURE:
+    raise RuntimeError(
+        'AUTH_COOKIE_SECURE must be True when AUTH_COOKIE_SAMESITE=None.'
+    )
+if not DEBUG and AUTH_COOKIE_SAMESITE != 'None':
+    raise RuntimeError(
+        'Cross-site production auth requires AUTH_COOKIE_SAMESITE=None.'
+    )
+
+SECURE_SSL_REDIRECT = os.environ.get(
+    'SECURE_SSL_REDIRECT',
+    'True' if not DEBUG else 'False',
+) == 'True'
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+X_FRAME_OPTIONS = 'DENY'
+SECURE_HSTS_SECONDS = int(
+    os.environ.get('SECURE_HSTS_SECONDS', '31536000' if not DEBUG else '0')
+)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get(
+    'SECURE_HSTS_INCLUDE_SUBDOMAINS',
+    'True' if not DEBUG else 'False',
+) == 'True'
+SECURE_HSTS_PRELOAD = os.environ.get(
+    'SECURE_HSTS_PRELOAD',
+    'True' if not DEBUG else 'False',
+) == 'True'
+
+SECURITY_CSP_REPORT_ONLY = os.environ.get(
+    'SECURITY_CSP_REPORT_ONLY',
+    "default-src 'self'",
+)
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(
+    os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(2 * 1024 * 1024))
+)
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(
+    os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', str(2 * 1024 * 1024))
+)

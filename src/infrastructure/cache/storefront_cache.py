@@ -62,3 +62,8 @@ def product_detail_cache_key(
         f"storefront:product-detail:{product_id}:{details_flag}:"
         f"v{_get_version(_PRODUCT_VERSION_KEY)}"
     )
+
+
+def product_list_default_cache_key() -> str:
+    """Versioned key for default first-page product list (no filters)."""
+    return f"storefront:products:list:default:v{_get_version(_PRODUCT_VERSION_KEY)}"
