@@ -1,4 +1,6 @@
 """Catalog views."""
+from django.conf import settings
+from django.core.cache import cache
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework import status
@@ -23,6 +25,11 @@ from interfaces.rest.catalog.serializers import (
     PaginatedProductResponseSerializer,
 )
 from interfaces.rest.shared.responses import success_response, error_response
+from src.infrastructure.cache.storefront_cache import (
+    categories_all_cache_key,
+    categories_cache_key,
+    product_detail_cache_key,
+)
 
 
 # Initialize dependencies
@@ -36,11 +43,17 @@ class CategoryListView(APIView):
     
     def get(self, request):
         """List categories."""
+        cached_payload = cache.get(categories_cache_key())
+        if cached_payload is not None:
+            return success_response(cached_payload)
+
         use_case = ListCategoriesUseCase(_category_repo)
         categories = use_case.execute()
-        return success_response([
+        payload = [
             CategoryResponseSerializer(cat).data for cat in categories
-        ])
+        ]
+        cache.set(categories_cache_key(), payload, timeout=settings.CACHE_TIMEOUT)
+        return success_response(payload)
 
 
 class CategoryWithSubcategoriesListView(APIView):
@@ -49,12 +62,22 @@ class CategoryWithSubcategoriesListView(APIView):
 
     def get(self, request):
         """List categories with subcategories."""
+        cached_payload = cache.get(categories_all_cache_key())
+        if cached_payload is not None:
+            return success_response(cached_payload)
+
         use_case = ListCategoriesWithSubcategoriesUseCase(_category_repo)
         categories = use_case.execute()
-        return success_response([
+        payload = [
             CategoryWithSubcategoriesResponseSerializer(cat).data
             for cat in categories
-        ])
+        ]
+        cache.set(
+            categories_all_cache_key(),
+            payload,
+            timeout=settings.CACHE_TIMEOUT,
+        )
+        return success_response(payload)
 
 
 class SubcategoryListByCategoryView(APIView):
@@ -82,10 +105,17 @@ class ProductListView(APIView):
         category_id = request.query_params.get('category_id')
         subcategory_id = request.query_params.get('subcategory_id')
         subcategory_ids_param = request.query_params.get('subcategory_ids')
+        subcategory_slug = request.query_params.get('subcategory_slug')
+        subcategory_slugs_param = request.query_params.get('subcategory_slugs')
         search = request.query_params.get('search')
         availability = request.query_params.get('availability')
-        page = int(request.query_params.get('page', 1))
-        page_size = int(request.query_params.get('page_size', 20))
+        page = max(int(request.query_params.get('page', 1)), 1)
+        requested_page_size = int(request.query_params.get('page_size', 20))
+        page_size = min(max(requested_page_size, 1), 60)
+        include_detailed_specs = (
+            request.query_params.get('include_detailed_specs', 'false').lower()
+            in ('true', '1', 'yes')
+        )
         
         # Parse spec filters (e.g., ?spec_material=leather&spec_strap_length_cm=110)
         spec_filters = {}
@@ -95,6 +125,7 @@ class ProductListView(APIView):
                 spec_filters[spec_key] = value
         
         subcategory_ids = None
+        subcategory_slugs = None
         if subcategory_ids_param:
             subcategory_ids = [
                 int(val) for val in subcategory_ids_param.split(',')
@@ -103,14 +134,24 @@ class ProductListView(APIView):
         elif subcategory_id:
             subcategory_ids = [int(subcategory_id)]
 
+        if subcategory_slugs_param:
+            subcategory_slugs = [
+                val.strip() for val in subcategory_slugs_param.split(',')
+                if val.strip()
+            ]
+        elif subcategory_slug:
+            subcategory_slugs = [subcategory_slug.strip()]
+
         list_request = ListProductsRequest(
             category_id=int(category_id) if category_id else None,
             subcategory_ids=subcategory_ids,
+            subcategory_slugs=subcategory_slugs,
             search=search,
             availability=availability,
             spec_filters=spec_filters if spec_filters else None,
             page=page,
-            page_size=page_size
+            page_size=page_size,
+            include_detailed_specs=include_detailed_specs,
         )
         
         use_case = ListProductsUseCase(_product_repo, _category_repo)
@@ -134,9 +175,23 @@ class ProductDetailView(APIView):
     def get(self, request, product_id):
         """Get product by ID."""
         try:
+            include_detailed_specs = (
+                request.query_params.get('include_detailed_specs', 'true').lower()
+                in ('true', '1', 'yes')
+            )
+            cache_key = product_detail_cache_key(
+                product_id=product_id,
+                include_detailed_specs=include_detailed_specs,
+            )
+            cached_payload = cache.get(cache_key)
+            if cached_payload is not None:
+                return success_response(cached_payload)
+
             use_case = GetProductUseCase(_product_repo, _category_repo)
             product = use_case.execute(product_id)
-            return success_response(ProductResponseSerializer(product).data)
+            payload = ProductResponseSerializer(product).data
+            cache.set(cache_key, payload, timeout=settings.CACHE_TIMEOUT)
+            return success_response(payload)
         except NotFoundError as e:
             return error_response(str(e), status=status.HTTP_404_NOT_FOUND)
 

@@ -9,3 +9,7 @@ class DbConfig(AppConfig):
     label = 'db'
     verbose_name = 'Database Models'
 
+    def ready(self):
+        # Register cache invalidation signals.
+        import src.infrastructure.db.signals  # noqa: F401
+

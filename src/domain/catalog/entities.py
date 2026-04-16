@@ -13,6 +13,7 @@ class Category:
     id: Optional[int]
     name: str
     slug: str
+    image: Optional[str]
     created_at: datetime
     
     def __post_init__(self):
@@ -30,6 +31,7 @@ class Subcategory:
     name: str
     slug: str
     description: Optional[str]
+    image: Optional[str]
     created_at: datetime
     
     def __post_init__(self):
@@ -58,6 +60,7 @@ class Product:
     """Product entity."""
     id: Optional[int]
     name: str
+    description: Optional[str]
     brand: Optional[str]
     price: Decimal
     price_new: Optional[Decimal]
@@ -89,6 +92,14 @@ class ProductVariant:
     """Product variant entity."""
     id: Optional[int]
     product_id: int
+    folder: Optional[str]
+    color: Optional[str]
+    material: Optional[str]
+    cord_diameter: Optional[str]
+    cord_type: Optional[str]
+    description: Optional[str]
+    care: Optional[str]
+    handles: Optional[str]
     name: str
     value: str
     image_url: Optional[str]

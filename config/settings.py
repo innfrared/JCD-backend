@@ -93,6 +93,27 @@ else:
         }
     }
 
+CACHE_BACKEND = os.environ.get(
+    'CACHE_BACKEND',
+    'django.core.cache.backends.filebased.FileBasedCache',
+)
+CACHE_LOCATION = os.environ.get(
+    'CACHE_LOCATION',
+    str(BASE_DIR / '.django_cache'),
+)
+CACHE_TIMEOUT = int(os.environ.get('CACHE_TIMEOUT_SECONDS', '300'))
+
+CACHES = {
+    'default': {
+        'BACKEND': CACHE_BACKEND,
+        'LOCATION': CACHE_LOCATION,
+        'TIMEOUT': CACHE_TIMEOUT,
+        'OPTIONS': {
+            'MAX_ENTRIES': int(os.environ.get('CACHE_MAX_ENTRIES', '10000')),
+        },
+    }
+}
+
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},

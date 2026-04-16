@@ -10,20 +10,20 @@ from interfaces.rest.catalog import views as catalog_views
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('interfaces.rest.users.urls')),
-    path('api/categories/', catalog_views.CategoryListView.as_view(), name='category-list'),
+    path('api/categories', catalog_views.CategoryListView.as_view(), name='category-list'),
     path(
-        'api/categories/all/',
+        'api/categories/all',
         catalog_views.CategoryWithSubcategoriesListView.as_view(),
         name='category-list-with-subcategories',
     ),
     path(
-        'api/categories/<int:category_id>/subcategories/',
+        'api/categories/<int:category_id>/subcategories',
         catalog_views.SubcategoryListByCategoryView.as_view(),
         name='subcategory-list-by-category',
     ),
-    path('api/products/', catalog_views.ProductListView.as_view(), name='product-list'),
-    path('api/products/<int:product_id>/', catalog_views.ProductDetailView.as_view(), name='product-detail'),
-    path('api/home/', include('interfaces.rest.homepage.urls')),
+    path('api/products', catalog_views.ProductListView.as_view(), name='product-list'),
+    path('api/products/<int:product_id>', catalog_views.ProductDetailView.as_view(), name='product-detail'),
+    path('api/home', include('interfaces.rest.homepage.urls')),
 ]
 
 # Serve media files in development

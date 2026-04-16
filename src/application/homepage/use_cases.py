@@ -39,9 +39,7 @@ class GetHomePageSectionsUseCase:
         
         for section in sections:
             items = section_items_map.get(section.id, [])
-            # Sort items by sort_order
-            sorted_items = sorted(items, key=lambda x: x.sort_order)
-            product_ids = [item.product_id for item in sorted_items]
+            product_ids = [item.product_id for item in items]
             section_product_ids_map[section.id] = product_ids
             all_product_ids.extend(product_ids)
         

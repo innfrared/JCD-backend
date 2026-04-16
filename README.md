@@ -175,21 +175,87 @@ If you get `pip NotFoundError`:
 - `POST /api/auth/refresh` - Refresh JWT token
 
 ### User Profile
-- `GET /api/me/` - Get current user profile
-- `PATCH /api/me/` - Update user profile
+- `GET /api/me` - Get current user profile
+- `PATCH /api/me` - Update user profile
 
 ### Addresses
-- `GET /api/addresses/` - List user addresses
-- `POST /api/addresses/` - Create new address
-- `PATCH /api/addresses/<id>/` - Update address
-- `DELETE /api/addresses/<id>/` - Delete address
+- `GET /api/addresses` - List user addresses
+- `POST /api/addresses` - Create new address
+- `PATCH /api/addresses/<id>` - Update address
+- `DELETE /api/addresses/<id>` - Delete address
 - `POST /api/addresses/<id>/set-default` - Set default address
 
 ### Catalog
 - `GET /api/categories` - List all categories
+- `GET /api/categories/all` - List public categories with nested public subcategories
 - `GET /api/products` - List products (with filters)
-  - Query params: `category_id`, `subcategory_id`, `search`, `availability`, `spec_<key>=<value>`, `page`, `page_size`
+  - Supported query params: `category_id`, `subcategory_id`, `subcategory_ids`, `search`, `availability`, `page`, `page_size`, `spec_<key>=<value>`
 - `GET /api/products/<id>` - Get product details
+
+### Catalog Contract
+- `GET /api/categories/all` is the source of truth for category and subcategory ids used by the frontend.
+- `GET /api/categories/all` returns:
+  - category: `id`, `name`, `slug`, `created_at`, `subcategories`
+  - subcategory: `id`, `category_id`, `name`, `slug`, `description`, `created_at`
+- `subcategory.description` is always present in `GET /api/categories/all` as a string or `null`.
+- Public catalog taxonomy excludes legacy migration rows whose slugs contain `-old-`.
+- Canonical public slugs are:
+  - categories: `bags`
+  - subcategories: `crossbody-bags`, `shoulder-bags`, `handbags`, `clutches`
+- Frontend resolves canonical slug -> id from `GET /api/categories/all`, then calls `GET /api/products` with ids.
+- Frontend never hardcodes ids.
+- Frontend curated label mapping stays client-side:
+  - `Top Handle` -> `handbags`
+  - `Evening` -> `clutches`
+- `Belts` and `Accessories` are unavailable until backend taxonomy exists.
+- `GET /api/products` does not support `ordering`, `category_slug`, or `subcategory_slug`.
+- `GET /api/products` returns:
+  - top-level: `items`, `total`, `page`, `page_size`, `total_pages`, `has_next`, `has_previous`
+  - each product item includes `category_id`, `subcategory_ids`, nested `category`, nested `subcategories`, prices, availability, variant fields, and `specifications`
+
+Example frontend flow:
+```js
+const categories = await fetch('/api/categories/all').then((res) => res.json());
+const bags = categories.find((category) => category.slug === 'bags');
+const crossbody = bags?.subcategories.find(
+  (subcategory) => subcategory.slug === 'crossbody-bags'
+);
+
+await fetch(
+  `/api/products?category_id=${bags.id}&subcategory_id=${crossbody.id}&page=1&page_size=20`
+);
+```
+
+## Cookie-Based Auth (Next.js SSR)
+
+This backend issues JWT access + refresh tokens in HTTP-only cookies for SSR-friendly authentication.
+
+### Endpoints
+- `POST /api/auth/login` - Sets access/refresh cookies and returns user
+- `POST /api/auth/refresh` - Rotates refresh, sets new access (and refresh) cookies
+- `POST /api/auth/logout` - Clears auth cookies
+- `GET /api/auth/me` - Returns current user
+
+### Required env vars
+See `.env.example` for the full list. Key values:
+- `FRONTEND_ORIGINS=http://localhost:5173`
+- `AUTH_COOKIE_SECURE=False`
+- `AUTH_COOKIE_SAMESITE=Lax` (use `None` + `AUTH_COOKIE_SECURE=True` for cross-domain prod)
+- `AUTH_COOKIE_DOMAIN=` (optional parent domain)
+
+### Frontend usage
+Use credentials in browser requests:
+```js
+fetch('http://localhost:8000/api/auth/me', { credentials: 'include' })
+```
+
+### CSRF behavior
+JWT cookies are protected with double-submit CSRF.
+- Login sets a `csrftoken` cookie.
+- For unsafe requests (POST/PUT/PATCH/DELETE), send:
+  - `X-CSRFToken: <csrftoken cookie value>`
+
+For Next.js SSR, read the `csrftoken` cookie from the incoming request and forward it as the `X-CSRFToken` header.
 
 ## Database Schema
 
@@ -219,4 +285,3 @@ If you get `pip NotFoundError`:
 ## License
 
 MIT
-

@@ -8,6 +8,7 @@ class Category(models.Model):
     """Category model."""
     name = models.CharField(max_length=200, db_index=True)
     slug = models.SlugField(unique=True, max_length=200)
+    image = models.URLField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -27,6 +28,7 @@ class Subcategory(models.Model):
     name = models.CharField(max_length=200, db_index=True)
     slug = models.SlugField(max_length=200)
     description = models.TextField(blank=True, null=True)
+    image = models.URLField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -77,6 +79,7 @@ class Product(models.Model):
         GBP = 'GBP', 'GBP'
     
     name = models.CharField(max_length=300, db_index=True)
+    description = models.TextField(blank=True, null=True)
     brand = models.CharField(max_length=100, blank=True, null=True)
     price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal('0'))])
     price_new = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, validators=[MinValueValidator(Decimal('0'))])
@@ -105,6 +108,8 @@ class Product(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['category', 'availability']),
+            models.Index(fields=['category', '-created_at']),
+            models.Index(fields=['availability', '-created_at']),
         ]
     
     def __str__(self):
@@ -114,6 +119,14 @@ class Product(models.Model):
 class ProductVariant(models.Model):
     """Product variant model."""
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='variants')
+    folder = models.CharField(max_length=100, blank=True, null=True)
+    color = models.CharField(max_length=100, blank=True, null=True)
+    material = models.CharField(max_length=200, blank=True, null=True)
+    cord_diameter = models.CharField(max_length=50, blank=True, null=True)
+    cord_type = models.CharField(max_length=100, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    care = models.TextField(blank=True, null=True)
+    handles = models.CharField(max_length=200, blank=True, null=True)
     name = models.CharField(max_length=100)
     value = models.CharField(max_length=200)
     image_url = models.URLField(blank=True, null=True)
@@ -126,6 +139,9 @@ class ProductVariant(models.Model):
         verbose_name = 'Product Variant'
         verbose_name_plural = 'Product Variants'
         ordering = ['sort_order', 'id']
+        indexes = [
+            models.Index(fields=['product', 'sort_order']),
+        ]
     
     def __str__(self):
         return f"{self.product.name} - {self.name}: {self.value}"

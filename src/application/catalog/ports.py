@@ -1,10 +1,7 @@
 """Catalog repository ports (interfaces)."""
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Tuple
-from src.domain.catalog.entities import (
-    Category, Subcategory, Product, VariantGroup, Attribute,
-    AttributeOption, ProductAttributeValue
-)
+from src.domain.catalog.entities import Category, Subcategory, Product, ProductVariant
 
 
 class CategoryRepository(ABC):
@@ -19,6 +16,11 @@ class CategoryRepository(ABC):
     def get_by_id(self, category_id: int) -> Optional[Category]:
         """Get category by ID."""
         pass
+
+    @abstractmethod
+    def get_by_ids(self, category_ids: List[int]) -> Dict[int, Category]:
+        """Get categories indexed by ID."""
+        pass
     
     @abstractmethod
     def get_subcategory_by_id(self, subcategory_id: int) -> Optional[Subcategory]:
@@ -28,6 +30,29 @@ class CategoryRepository(ABC):
     @abstractmethod
     def get_subcategories_by_category(self, category_id: int) -> List[Subcategory]:
         """Get subcategories by category ID."""
+        pass
+
+    @abstractmethod
+    def get_subcategories_by_ids(
+        self, subcategory_ids: List[int]
+    ) -> Dict[int, Subcategory]:
+        """Get subcategories indexed by ID."""
+        pass
+
+    @abstractmethod
+    def get_subcategories_by_category_ids(
+        self, category_ids: List[int]
+    ) -> Dict[int, List[Subcategory]]:
+        """Get subcategories grouped by category ID."""
+        pass
+
+    @abstractmethod
+    def get_subcategories_by_slugs(
+        self,
+        slugs: List[str],
+        category_id: Optional[int] = None,
+    ) -> List[Subcategory]:
+        """Get subcategories matching slugs, optionally scoped by category."""
         pass
 
 
@@ -61,6 +86,11 @@ class ProductRepository(ABC):
     ) -> List[Product]:
         """Get all products in a variant group, excluding specified product."""
         pass
+
+    @abstractmethod
+    def get_product_variants(self, product_id: int) -> List[ProductVariant]:
+        """Get all variants for a specific product."""
+        pass
     
     @abstractmethod
     def get_specifications(
@@ -74,21 +104,12 @@ class ProductRepository(ABC):
         """
         pass
 
-
-class AttributeRepository(ABC):
-    """Attribute repository interface."""
-    
     @abstractmethod
-    def get_by_scope(
+    def get_specifications_batch(
         self,
-        scope_type: str,
-        scope_id: int
-    ) -> List[Attribute]:
-        """Get attributes by scope."""
-        pass
-    
-    @abstractmethod
-    def get_options(self, attribute_id: int) -> List[AttributeOption]:
-        """Get options for an attribute."""
+        product_ids: List[int],
+        include_detailed: bool = False,
+    ) -> Dict[int, Tuple[Dict[str, str], List[Dict]]]:
+        """Get product specifications in batch indexed by product ID."""
         pass
 

@@ -9,7 +9,7 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from src.application.users.use_cases import (
-    RegisterUserUseCase, LoginUserUseCase, GetMeUseCase, UpdateProfileUseCase,
+    RegisterUserUseCase, LoginUserUseCase, UpdateProfileUseCase,
     ListAddressesUseCase, CreateAddressUseCase, UpdateAddressUseCase,
     DeleteAddressUseCase, SetDefaultAddressUseCase
 )
@@ -96,10 +96,10 @@ class LoginView(APIView):
             use_case = LoginUserUseCase(_user_repo, _password_hasher, _token_service)
             tokens = use_case.execute(serializer.validated_data)
             user = _user_repo.get_by_email(serializer.validated_data.email)
-            user_response = GetMeUseCase(_user_repo).execute(user.id) if user else None
+            user_response = UserResponseSerializer(user).data if user else None
 
             response = success_response({
-                'user': UserResponseSerializer(user_response).data if user_response else None,
+                'user': user_response,
                 'authenticated': True,
             })
             set_access_cookie(response, tokens.access)
@@ -180,12 +180,7 @@ class MeView(APIView):
     
     def get(self, request):
         """Get current user."""
-        try:
-            use_case = GetMeUseCase(_user_repo)
-            user_response = use_case.execute(request.user.id)
-            return success_response(UserResponseSerializer(user_response).data)
-        except NotFoundError as e:
-            return error_response(str(e), status=status.HTTP_404_NOT_FOUND)
+        return success_response(UserResponseSerializer(request.user).data)
     
     def patch(self, request):
         """Update current user profile."""

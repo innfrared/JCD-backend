@@ -1,4 +1,6 @@
 """Homepage views."""
+from django.conf import settings
+from django.core.cache import cache
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework import status
@@ -10,6 +12,7 @@ from src.infrastructure.db.repositories.homepage_repo import (
 )
 from interfaces.rest.homepage.serializers import HomePageResponseSerializer
 from interfaces.rest.shared.responses import success_response, error_response
+from src.infrastructure.cache.storefront_cache import homepage_cache_key
 
 
 # Initialize dependencies
@@ -25,14 +28,18 @@ class HomePageView(APIView):
     def get(self, request):
         """Get homepage sections."""
         try:
+            cached_payload = cache.get(homepage_cache_key())
+            if cached_payload is not None:
+                return success_response(cached_payload)
+
             use_case = GetHomePageSectionsUseCase(
                 _home_section_repo,
                 _product_card_repo
             )
             response = use_case.execute()
-            return success_response(
-                HomePageResponseSerializer(response).data
-            )
+            payload = HomePageResponseSerializer(response).data
+            cache.set(homepage_cache_key(), payload, timeout=settings.CACHE_TIMEOUT)
+            return success_response(payload)
         except Exception as e:
             return error_response(
                 str(e),
