@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.test import TestCase
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.core.cache import cache
 from rest_framework.test import APIClient
 
 from src.infrastructure.db.models.catalog import (
@@ -11,9 +12,11 @@ from src.infrastructure.db.models.catalog import (
     Product,
     ProductAttributeValue,
     ProductVariant,
+    ProductVariantImage,
     Subcategory,
     VariantGroup,
 )
+from src.infrastructure.cache.storefront_cache import product_detail_cache_key
 
 
 class CatalogContractTests(TestCase):
@@ -311,8 +314,17 @@ class CatalogContractTests(TestCase):
         )
         self.assertIn('variants_detailed', payload)
         self.assertEqual(len(payload['variants_detailed']), 2)
-        self.assertIn('image_url', payload['variants_detailed'][0])
-        self.assertIn('sort_order', payload['variants_detailed'][0])
+        variants_by_sort_order = {
+            v['sort_order']: v for v in payload['variants_detailed']
+        }
+        self.assertEqual(variants_by_sort_order[1]['image_url'], 'https://images.example.com/aurora-primary.jpg')
+        self.assertEqual(variants_by_sort_order[2]['image_url'], 'https://images.example.com/aurora-secondary.jpg')
+        # Strict contract: images must always exist (empty when no gallery rows).
+        for v in payload['variants_detailed']:
+            self.assertIn('images', v)
+            self.assertEqual(v['images'], [])
+            self.assertIn('image_url', v)
+            self.assertIn('sort_order', v)
         self.assertIn('variant_ids', payload)
         self.assertEqual(
             payload['variant_ids'],
@@ -324,6 +336,174 @@ class CatalogContractTests(TestCase):
         self.assertTrue(payload['variant_options'][0]['is_current'])
         self.assertEqual(payload['variant_options'][1]['id'], self.product_shoulder.id)
         self.assertFalse(payload['variant_options'][1]['is_current'])
+
+    def test_product_detail_variant_images_are_isolated_and_ordered(self):
+        # Load deterministic variant ordering: sort_order then id.
+        variants = list(
+            ProductVariant.objects.filter(product=self.product_crossbody).order_by(
+                'sort_order', 'id'
+            )
+        )
+        self.assertEqual(len(variants), 2)
+        v_sort_1, v_sort_2 = variants[0], variants[1]
+
+        # Variant sort_order=1 gets two gallery images with an explicit primary.
+        ProductVariantImage.objects.create(
+            variant=v_sort_1,
+            image_url='https://images.example.com/v1-secondary.jpg',
+            alt='v1 secondary',
+            sort_order=2,
+            is_primary=False,
+        )
+        ProductVariantImage.objects.create(
+            variant=v_sort_1,
+            image_url='https://images.example.com/v1-primary.jpg',
+            alt='v1 primary',
+            sort_order=1,
+            is_primary=True,
+        )
+
+        # Variant sort_order=2 gets one gallery image.
+        ProductVariantImage.objects.create(
+            variant=v_sort_2,
+            image_url='https://images.example.com/v2-primary.jpg',
+            alt='v2 primary',
+            sort_order=1,
+            is_primary=True,
+        )
+
+        # Cache can contain a stale PDP payload from other tests; evict explicitly.
+        cache.delete(
+            product_detail_cache_key(
+                product_id=self.product_crossbody.id,
+                include_detailed_specs=True,
+            )
+        )
+        response = self.client.get(f'/api/products/{self.product_crossbody.id}')
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+
+        variants_by_id = {v['id']: v for v in payload['variants_detailed']}
+
+        v1_payload = variants_by_id[v_sort_1.id]
+        self.assertEqual(v1_payload['image_url'], 'https://images.example.com/v1-primary.jpg')
+        self.assertEqual(len(v1_payload['images']), 2)
+        self.assertEqual(
+            [img['url'] for img in v1_payload['images']],
+            [
+                'https://images.example.com/v1-primary.jpg',
+                'https://images.example.com/v1-secondary.jpg',
+            ],
+        )
+        self.assertTrue(v1_payload['images'][0]['is_primary'])
+
+        v2_payload = variants_by_id[v_sort_2.id]
+        self.assertEqual(v2_payload['image_url'], 'https://images.example.com/v2-primary.jpg')
+        self.assertEqual(len(v2_payload['images']), 1)
+        self.assertEqual(v2_payload['images'][0]['url'], 'https://images.example.com/v2-primary.jpg')
+
+        # Isolation check: images don't leak between variants.
+        self.assertNotIn(
+            'https://images.example.com/v1-primary.jpg',
+            {img['url'] for img in v2_payload['images']},
+        )
+
+    def test_product_detail_variant_image_url_primary_preference_and_fallback(self):
+        # Get a single variant to test behavior.
+        variant = list(
+            ProductVariant.objects.filter(product=self.product_crossbody).order_by(
+                'sort_order', 'id'
+            )
+        )[0]
+
+        # Case 1: no primary => image_url should use first by sort_order.
+        ProductVariantImage.objects.create(
+            variant=variant,
+            image_url='https://images.example.com/noprimary-2.jpg',
+            alt='no primary second',
+            sort_order=2,
+            is_primary=False,
+        )
+        ProductVariantImage.objects.create(
+            variant=variant,
+            image_url='https://images.example.com/noprimary-1.jpg',
+            alt='no primary first',
+            sort_order=1,
+            is_primary=False,
+        )
+
+        cache.delete(
+            product_detail_cache_key(
+                product_id=self.product_crossbody.id,
+                include_detailed_specs=False,
+            )
+        )
+        response = self.client.get(
+            f'/api/products/{self.product_crossbody.id}',
+            {'include_detailed_specs': 'false'},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        v_payload = next(v for v in payload['variants_detailed'] if v['id'] == variant.id)
+        self.assertEqual(v_payload['image_url'], 'https://images.example.com/noprimary-1.jpg')
+
+        # Case 2: primary exists => image_url should switch to the primary.
+        ProductVariantImage.objects.create(
+            variant=variant,
+            image_url='https://images.example.com/hasprimary.jpg',
+            alt='has primary',
+            sort_order=0,
+            is_primary=True,
+        )
+
+        cache.delete(
+            product_detail_cache_key(
+                product_id=self.product_crossbody.id,
+                include_detailed_specs=False,
+            )
+        )
+        response = self.client.get(
+            f'/api/products/{self.product_crossbody.id}',
+            {'include_detailed_specs': 'false'},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        v_payload = next(v for v in payload['variants_detailed'] if v['id'] == variant.id)
+        self.assertEqual(v_payload['image_url'], 'https://images.example.com/hasprimary.jpg')
+
+    def test_product_detail_query_count_guardrail(self):
+        # Ensure there are enough gallery rows to expose N+1 patterns if present.
+        variants = list(
+            ProductVariant.objects.filter(product=self.product_crossbody).order_by(
+                'sort_order', 'id'
+            )
+        )
+        self.assertEqual(len(variants), 2)
+
+        for v in variants:
+            for sort_order in range(1, 5):
+                ProductVariantImage.objects.create(
+                    variant=v,
+                    image_url=f'https://images.example.com/guard-{v.id}-{sort_order}.jpg',
+                    alt='guard',
+                    sort_order=sort_order,
+                    is_primary=(sort_order == 1),
+                )
+
+        cache.delete(
+            product_detail_cache_key(
+                product_id=self.product_crossbody.id,
+                include_detailed_specs=False,
+            )
+        )
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(
+                f'/api/products/{self.product_crossbody.id}',
+                {'include_detailed_specs': 'false'},
+            )
+        self.assertEqual(response.status_code, 200)
+        # Should stay bounded: base product + prefetch variants + prefetch images (+ siblings + specs, though specs are disabled).
+        self.assertLessEqual(len(queries), 12)
 
     def test_products_filter_by_category_id(self):
         response = self.client.get('/api/products', {

@@ -74,7 +74,18 @@ class ProductVariantDetailResponse:
     care: Optional[str]
     handles: Optional[str]
     image_url: Optional[str]
+    images: List['ProductVariantImageDetailResponse']
     sort_order: int
+
+
+@dataclass
+class ProductVariantImageDetailResponse:
+    """Single gallery image payload for a product variant/color."""
+    id: int
+    url: Optional[str]
+    alt: str = ''
+    sort_order: int = 0
+    is_primary: bool = False
 
 
 @dataclass

@@ -147,6 +147,45 @@ class ProductVariant(models.Model):
         return f"{self.product.name} - {self.name}: {self.value}"
 
 
+class ProductVariantImage(models.Model):
+    """Gallery images for a product variant/color."""
+    variant = models.ForeignKey(
+        ProductVariant,
+        on_delete=models.CASCADE,
+        related_name='images',
+    )
+    image_url = models.URLField(blank=True, null=True)
+    alt = models.CharField(max_length=255, blank=True, default='')
+    sort_order = models.PositiveIntegerField(default=0)
+    is_primary = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'product_variant_images'
+        verbose_name = 'Product Variant Image'
+        verbose_name_plural = 'Product Variant Images'
+        ordering = ['sort_order', 'id']
+        indexes = [
+            models.Index(fields=['variant', 'sort_order', 'id']),
+        ]
+
+    def __str__(self):
+        return f"VariantImage #{self.id} (variant_id={self.variant_id})"
+
+    def save(self, *args, **kwargs):
+        # Enforce at most one primary per variant (best-effort, without a hard DB constraint).
+        if self.is_primary and self.variant_id:
+            from django.db import transaction
+
+            with transaction.atomic():
+                type(self).objects.filter(
+                    variant_id=self.variant_id,
+                    is_primary=True,
+                ).exclude(pk=self.pk).update(is_primary=False)
+                return super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
+
+
 class VariantSize(models.Model):
     """Variant size model."""
     variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE, related_name='sizes')

@@ -192,11 +192,17 @@ class LogoutView(APIView):
 
 
 class MeView(APIView):
-    """Get current user view."""
-    permission_classes = [IsAuthenticated]
-    
+    """Get / patch current user. GET is public-friendly: anonymous -> 200 { user: null }."""
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
     def get(self, request):
-        """Get current user."""
+        """Get current user. Anonymous (no valid auth) is not an error."""
+        if not request.user.is_authenticated:
+            return success_response({'user': None})
         return success_response(UserResponseSerializer(request.user).data)
     
     def patch(self, request):

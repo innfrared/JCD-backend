@@ -65,6 +65,15 @@ class VariantSwitchOptionSerializer(serializers.Serializer):
     is_current = serializers.BooleanField()
 
 
+class ProductVariantImageSerializer(serializers.Serializer):
+    """Single image item for product variant gallery."""
+    id = serializers.IntegerField()
+    url = serializers.CharField(source='image_url', allow_null=True)
+    alt = serializers.CharField(allow_blank=True, default='')
+    sort_order = serializers.IntegerField(min_value=0)
+    is_primary = serializers.BooleanField()
+
+
 class ProductVariantDetailSerializer(serializers.Serializer):
     """Detailed variant serializer for product detail endpoint."""
     id = serializers.IntegerField()
@@ -77,6 +86,7 @@ class ProductVariantDetailSerializer(serializers.Serializer):
     care = serializers.CharField(allow_null=True)
     handles = serializers.CharField(allow_null=True)
     image_url = serializers.CharField(allow_null=True)
+    images = ProductVariantImageSerializer(many=True)
     sort_order = serializers.IntegerField()
 
 

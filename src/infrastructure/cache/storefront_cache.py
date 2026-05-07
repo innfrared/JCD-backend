@@ -33,7 +33,7 @@ def bump_homepage_version() -> None:
 
 
 def bump_product_version() -> None:
-    """Invalidate product-detail caches."""
+    """Bump storefront product version so default product-list snapshot and PDP caches invalidate."""
     _bump_version(_PRODUCT_VERSION_KEY)
 
 
@@ -65,5 +65,19 @@ def product_detail_cache_key(
 
 
 def product_list_default_cache_key() -> str:
-    """Versioned key for default first-page product list (no filters)."""
+    """Stable Django-cache key for exactly ONE listing variant.
+
+    Only ``GET /api/products`` requests that pass ``_is_default_product_list_cacheable``
+    in ``interfaces.rest.catalog.views`` may read/write this key: ``page=1``,
+    ``page_size=20``, no ``category_id`` / subcategory ids or slugs, no ``search`` /
+    ``availability``, no ``spec_*``, ``include_detailed_specs=false``.
+
+    Any other query (including ``page_size=18`` or filtered listings) never touches this
+    key—responses are computed fresh—so there is no collision risk from undocumented params
+    (``color``, ``sort``, etc.). If those become supported filters later, either keep them
+    out of this keyed path or extend caching explicitly.
+
+    The trailing ``v{n}`` comes from ``bump_product_version()`` on catalog mutations (see
+    ``signals.py``), so admin edits invalidate this snapshot without relying solely on TTL.
+    """
     return f"storefront:products:list:default:v{_get_version(_PRODUCT_VERSION_KEY)}"

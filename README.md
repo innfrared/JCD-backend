@@ -167,15 +167,36 @@ If you get `pip NotFoundError`:
 - Or use `python3 -m pip` instead
 - Make sure you're in the virtual environment
 
+### Checks and manual smoke tests
+
+```bash
+python manage.py check
+python manage.py test
+```
+
+Against production (replace host if needed):
+
+```bash
+curl -i https://jcd-backend.onrender.com/api/health
+curl -i "https://jcd-backend.onrender.com/api/products?page=1&page_size=18"
+curl -i "https://jcd-backend.onrender.com/api/categories"
+```
+
+Expect `HTTP 200` on `/api/health` with small JSON (no DB). Public catalog responses should include `Cache-Control: public, max-age=60` … `/api/products?page=1&page_size=18` must **not** attach product-list edge caching headers from this backend (non-default `page_size` → internal `cache=skip`). Timing logs for listings appear when `/api/products` runs—in Render logs, grep `products.list`.
+
+For the **default** listing (`GET /api/products?page=1&page_size=20`, no filters): first request logs `cache=miss`; immediate repeat may log `cache=hit` if the same Gunicorn worker still holds LocMem (not guaranteed across workers).
+
+If Postgres prompts about an existing test database, run ``python manage.py test --keepdb --noinput`` or drop the stale ``test_*`` DB.
+
 ## API Endpoints
 
 ### Authentication
 - `POST /api/auth/register` - Register new user
 - `POST /api/auth/login` - Login user
-- `POST /api/auth/refresh` - Refresh JWT token
+- `POST /api/auth/refresh` - Refresh access cookie (`200` on success). Returns `401` when refresh token is missing/expired/invalid; returns `403` only when CSRF/origin checks deny the request (send `X-CSRFToken` matching the CSRF cookie).
 
 ### User Profile
-- `GET /api/me` - Get current user profile
+- `GET /api/me` - Current user profile (`200`). Anonymous visitors receive `{ "user": null }` (not `401`). Invalid or malformed credentials (e.g. bad Bearer token or bad access cookie when present) return `401`.
 - `PATCH /api/me` - Update user profile
 
 ### Addresses
@@ -186,11 +207,25 @@ If you get `pip NotFoundError`:
 - `POST /api/addresses/<id>/set-default` - Set default address
 
 ### Catalog
+- `GET /api/health` - Liveness probe (`{"status":"ok"}`); no database access. Use for uptime pings (e.g. keep Render warm).
 - `GET /api/categories` - List all categories
 - `GET /api/categories/all` - List public categories with nested public subcategories
 - `GET /api/products` - List products (with filters)
   - Supported query params: `category_id`, `subcategory_id`, `subcategory_ids`, `search`, `availability`, `page`, `page_size`, `spec_<key>=<value>`
 - `GET /api/products/<id>` - Get product details
+
+Public catalog GET responses above send `Cache-Control: public, max-age=60, s-maxage=600, stale-while-revalidate=300` for CDN/browser caching. Filtered `GET /api/products` responses omit that header (only the default unfiltered first page is marked cacheable at the edge). Those responses use `Vary: Accept-Encoding` only—never `Vary: Cookie`, so shared CDN caches stay viable.
+
+**Product list Django cache (internal):** Only one snapshot is cached under a stable key: `GET /api/products` with `page=1`, `page_size=20`, and no category/subcategory/search/availability/spec filters (see `_is_default_product_list_cacheable`). Any other query string—including `page_size=18`—never uses that key, so there is no cross-talk from undocumented params (`color`, `sort`, etc.). Catalog mutations bump the storefront product version so this snapshot and product-detail entries invalidate (see `src/infrastructure/db/signals.py`).
+
+### Production notes (Render + Vercel)
+
+- **Warm the API**: On Render Free, the service sleeps after idle periods; first requests can take many seconds. Ping `GET /api/health` every ~10 minutes (UptimeRobot, cron-job.org, etc.) or upgrade to a paid Render instance so the service does not spin down.
+- **Database connections**: Default `DB_CONN_MAX_AGE` is `600` seconds when unset (override with env `DB_CONN_MAX_AGE`).
+- **In-process cache**: Default cache is **LocMemCache**: separate heap **per Gunicorn worker process**—entries are **not** shared across workers or hosts. Acceptable for current scale; use Redis (`CACHE_BACKEND`) when you need a shared cache layer.
+- **Vercel timeouts**: If the frontend calls this API from a Server Action or Route Handler, set `export const maxDuration = 30` (or higher on Pro) so serverless functions do not exit before a cold Render response.
+- **Next.js caching**: Prefer `fetch(url, { next: { revalidate: 600 } })` for catalog data so edge/CDN serves cached JSON between revalidations.
+- **Observability**: `GET /api/products` emits INFO logs on logger `catalog.timing` (`products.list ...`) with `cache`, `total_ms`, `db_ms`, `serialize_ms`, and counts—useful to separate cold start vs DB vs serialization.
 
 ### Catalog Contract
 - `GET /api/categories/all` is the source of truth for category and subcategory ids used by the frontend.

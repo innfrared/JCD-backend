@@ -22,6 +22,7 @@ from src.infrastructure.db.models.catalog import (
     Product as ProductModel,
     ProductAttributeValue as ProductAttributeValueModel,
     ProductVariant as ProductVariantModel,
+    ProductVariantImage as ProductVariantImageModel,
     Subcategory as SubcategoryModel,
 )
 
@@ -237,6 +238,11 @@ def load_product_detail_orm(product_id: int) -> ProductModel:
                 'variants',
                 ProductVariantModel.objects.order_by('sort_order', 'id'),
             ),
+            Prefetch(
+                'variants__images',
+                ProductVariantImageModel.objects.order_by('sort_order', 'id'),
+            ),
+            # Note: keep sibling product prefetch unchanged to avoid heavy payloads.
         )
         sibling_qs = (
             ProductModel.objects.select_related('category')
@@ -362,22 +368,47 @@ def build_product_detail_payload(
                     }
                 )
 
-    variants_detailed = [
-        {
-            'id': v.id,
-            'folder': v.folder,
-            'color': v.color,
-            'material': v.material,
-            'cord_diameter': v.cord_diameter,
-            'cord_type': v.cord_type,
-            'description': v.description,
-            'care': v.care,
-            'handles': v.handles,
-            'image_url': v.image_url,
-            'sort_order': v.sort_order,
-        }
-        for v in product.variants.all()
-    ]
+    variants_detailed: List[Dict[str, Any]] = []
+    for v in product.variants.all():
+        # `variants__images` is prefetched in load_product_detail_orm to avoid N+1 queries.
+        images_list = list(v.images.all())
+
+        images_payload = [
+            {
+                'id': img.id,
+                'image_url': img.image_url,
+                'alt': img.alt or '',
+                'sort_order': img.sort_order,
+                'is_primary': img.is_primary,
+            }
+            for img in images_list
+        ]
+
+        if images_list:
+            primary_variant_image = next(
+                (img for img in images_list if img.is_primary),
+                None,
+            )
+            chosen_url = (primary_variant_image or images_list[0]).image_url
+        else:
+            chosen_url = v.image_url
+
+        variants_detailed.append(
+            {
+                'id': v.id,
+                'folder': v.folder,
+                'color': v.color,
+                'material': v.material,
+                'cord_diameter': v.cord_diameter,
+                'cord_type': v.cord_type,
+                'description': v.description,
+                'care': v.care,
+                'handles': v.handles,
+                'image_url': chosen_url,
+                'images': images_payload,
+                'sort_order': v.sort_order,
+            }
+        )
 
     return {
         'id': product.id,

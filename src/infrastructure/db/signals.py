@@ -13,6 +13,7 @@ from src.infrastructure.db.models.catalog import (
     Product,
     ProductAttributeValue,
     ProductVariant,
+    ProductVariantImage,
     Subcategory,
 )
 from src.infrastructure.db.models.homepage import HomeSection, HomeSectionItem
@@ -35,7 +36,12 @@ def invalidate_homepage_cache(**kwargs) -> None:
 
 @receiver([post_save, post_delete], sender=Product)
 @receiver([post_save, post_delete], sender=ProductVariant)
+@receiver([post_save, post_delete], sender=ProductVariantImage)
 @receiver([post_save, post_delete], sender=ProductAttributeValue)
 def invalidate_product_cache(**kwargs) -> None:
-    """Invalidate product detail cache group."""
+    """Bump product storefront version (detail URLs + default first-page list snapshot).
+
+    Admin/API saves and deletes on catalog rows refresh cached payloads instead of relying
+    solely on ``CACHE_TIMEOUT`` or CDN ``max-age``. TTL/CDN windows remain an upper bound for stale reads.
+    """
     bump_product_version()

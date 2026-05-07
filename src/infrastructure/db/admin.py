@@ -4,6 +4,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models.users import User, Address
 from .models.catalog import (
     Category, Subcategory, VariantGroup, Product, ProductVariant, VariantSize,
+    ProductVariantImage,
     Attribute, AttributeOption, ProductAttributeValue, ProductAttributeOption
 )
 from .models.homepage import HomeSection, HomeSectionItem
@@ -67,6 +68,13 @@ class VariantSizeInline(admin.TabularInline):
     extra = 1
 
 
+class ProductVariantImageInline(admin.TabularInline):
+    """Variant image gallery inline admin."""
+    model = ProductVariantImage
+    fields = ('image_url', 'alt', 'sort_order', 'is_primary')
+    extra = 1
+
+
 @admin.register(ProductVariant)
 class ProductVariantAdmin(admin.ModelAdmin):
     """Product variant admin configuration."""
@@ -74,7 +82,7 @@ class ProductVariantAdmin(admin.ModelAdmin):
     list_filter = ('product__category',)
     search_fields = ('name', 'value', 'product__name')
     raw_id_fields = ('product',)
-    inlines = [VariantSizeInline]
+    inlines = [VariantSizeInline, ProductVariantImageInline]
 
 
 class ProductVariantInline(admin.TabularInline):

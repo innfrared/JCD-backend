@@ -1,8 +1,11 @@
 from decimal import Decimal
 
+from unittest.mock import patch
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.test import APIClient
 
 from src.infrastructure.db.models.catalog import Category, Product
@@ -69,13 +72,50 @@ class AuthCookieTests(TestCase):
             '',
         )
 
-    def test_me_requires_authentication(self):
-        response = self.client.get('/api/auth/me')
-        self.assertEqual(response.status_code, 401)
+    def test_me_anonymous_returns_200_with_null_user(self):
+        for path in ('/api/me', '/api/auth/me'):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, msg=path)
+            self.assertEqual(response.json(), {'user': None}, msg=path)
 
+    def test_me_authenticated_returns_user_payload(self):
         self._login()
+        response = self.client.get('/api/me')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data.get('email'), 'test@example.com')
+        self.assertIn('id', data)
+
         response = self.client.get('/api/auth/me')
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json().get('email'), 'test@example.com')
+
+    def test_me_invalid_authorization_returns_401(self):
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer not.a.valid.jwt.token')
+        response = self.client.get('/api/me')
+        self.assertEqual(response.status_code, 401)
+        self.client.credentials()
+
+    def test_me_invalid_access_cookie_returns_401(self):
+        self.client.cookies[settings.AUTH_ACCESS_COOKIE_NAME] = 'not.a.valid.jwt'
+        response = self.client.get('/api/me')
+        self.assertEqual(response.status_code, 401)
+
+    def test_refresh_missing_refresh_token_returns_401(self):
+        self._login()
+        del self.client.cookies[settings.AUTH_REFRESH_COOKIE_NAME]
+        response = self.client.post('/api/auth/refresh', **self._csrf_header())
+        self.assertEqual(response.status_code, 401)
+
+    def test_refresh_when_csrf_check_denies_returns_403(self):
+        """If CSRF/origin policy blocks the request, refresh must be 403 (not 401)."""
+        self._login()
+        with patch(
+            'interfaces.rest.users.views.enforce_csrf',
+            side_effect=PermissionDenied(detail='CSRF Failed: test'),
+        ):
+            response = self.client.post('/api/auth/refresh', **self._csrf_header())
+        self.assertEqual(response.status_code, 403)
 
     def test_invalid_refresh_clears_cookies(self):
         self._login()
@@ -110,6 +150,7 @@ class AuthCookieTests(TestCase):
             404,
         )
         self.assertEqual(self.client.get('/api/auth/me/').status_code, 404)
+        self.assertEqual(self.client.get('/api/me/').status_code, 404)
 
 
 class RouteNormalizationTests(TestCase):

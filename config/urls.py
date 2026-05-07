@@ -6,9 +6,11 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from interfaces.rest.catalog import views as catalog_views
+from interfaces.rest.shared.health import HealthView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/health', HealthView.as_view(), name='health'),
     path('api/', include('interfaces.rest.users.urls')),
     path('api/categories', catalog_views.CategoryListView.as_view(), name='category-list'),
     path(

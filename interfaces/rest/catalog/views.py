@@ -1,5 +1,7 @@
 """Catalog views."""
+import logging
 import re
+import time
 
 from django.conf import settings
 from django.core.cache import cache
@@ -34,6 +36,20 @@ from src.infrastructure.cache.storefront_cache import (
     product_list_default_cache_key,
 )
 from src.infrastructure.db import catalog_hot_reads as catalog_hot_reads
+
+
+logger = logging.getLogger('catalog.timing')
+
+_PUBLIC_CATALOG_CACHE_CONTROL = (
+    'public, max-age=60, s-maxage=600, stale-while-revalidate=300'
+)
+
+
+def _with_public_cache_headers(response):
+    """CDN-friendly headers only; never ``Vary: Cookie`` (would defeat shared CDN/cache)."""
+    response['Cache-Control'] = _PUBLIC_CATALOG_CACHE_CONTROL
+    response['Vary'] = 'Accept-Encoding'
+    return response
 
 
 # Initialize dependencies
@@ -131,7 +147,7 @@ class CategoryListView(APIView):
         """List categories."""
         cached_payload = cache.get(categories_cache_key())
         if cached_payload is not None:
-            return success_response(cached_payload)
+            return _with_public_cache_headers(success_response(cached_payload))
 
         use_case = ListCategoriesUseCase(_category_repo)
         categories = use_case.execute()
@@ -139,7 +155,7 @@ class CategoryListView(APIView):
             CategoryResponseSerializer(cat).data for cat in categories
         ]
         cache.set(categories_cache_key(), payload, timeout=settings.CACHE_TIMEOUT)
-        return success_response(payload)
+        return _with_public_cache_headers(success_response(payload))
 
 
 class CategoryWithSubcategoriesListView(APIView):
@@ -150,7 +166,7 @@ class CategoryWithSubcategoriesListView(APIView):
         """List categories with subcategories."""
         cached_payload = cache.get(categories_all_cache_key())
         if cached_payload is not None:
-            return success_response(cached_payload)
+            return _with_public_cache_headers(success_response(cached_payload))
 
         use_case = ListCategoriesWithSubcategoriesUseCase(_category_repo)
         categories = use_case.execute()
@@ -163,7 +179,7 @@ class CategoryWithSubcategoriesListView(APIView):
             payload,
             timeout=settings.CACHE_TIMEOUT,
         )
-        return success_response(payload)
+        return _with_public_cache_headers(success_response(payload))
 
 
 class SubcategoryListByCategoryView(APIView):
@@ -191,7 +207,16 @@ def _is_default_product_list_cacheable(
     page_size,
     include_detailed_specs,
 ) -> bool:
-    """Only cache the unfiltered first page at default page size (safe public key)."""
+    """Gate Django-cache use for the global default listing only.
+
+    When ``True``, responses share ``product_list_default_cache_key()`` (not parameterized by
+    query beyond these guards). ``False`` for every filtered/paged variant—including e.g.
+    ``page_size=18``, ``category_id``, ``subcategory_slug``, ``search``, ``spec_*``—so those
+    requests never read/write the default snapshot and cannot serve stale wrong slices.
+
+    There is no ``sort`` / ``color`` query API today; if added, either keep uncached here or
+    introduce explicit keys.
+    """
     if include_detailed_specs:
         return False
     if page != 1 or page_size != 20:
@@ -210,10 +235,12 @@ class ProductListView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'catalog_list'
-    
+
     def get(self, request):
         """List products."""
         from src.application.catalog.dto import ListProductsRequest
+
+        t0 = time.perf_counter()
 
         try:
             category_id = _parse_int_param(
@@ -295,7 +322,7 @@ class ProductListView(APIView):
             include_detailed_specs=include_detailed_specs,
         )
 
-        if _is_default_product_list_cacheable(
+        cacheable = _is_default_product_list_cacheable(
             category_id=list_request.category_id,
             subcategory_ids=list_request.subcategory_ids,
             subcategory_slugs=list_request.subcategory_slugs,
@@ -305,12 +332,26 @@ class ProductListView(APIView):
             page=list_request.page,
             page_size=list_request.page_size,
             include_detailed_specs=list_request.include_detailed_specs,
-        ):
+        )
+
+        cache_state = 'skip'
+        if cacheable:
             cache_key = product_list_default_cache_key()
             cached_payload = cache.get(cache_key)
             if cached_payload is not None:
-                return success_response(cached_payload)
+                total_ms = (time.perf_counter() - t0) * 1000.0
+                logger.info(
+                    'products.list cache=hit total_ms=%.1f page=%d page_size=%d',
+                    total_ms,
+                    list_request.page,
+                    list_request.page_size,
+                )
+                return _with_public_cache_headers(
+                    success_response(cached_payload)
+                )
+            cache_state = 'miss'
 
+        t_db_start = time.perf_counter()
         resolved_subcategory_ids = catalog_hot_reads.resolve_list_subcategory_ids(
             _category_repo,
             list_request.category_id,
@@ -336,6 +377,8 @@ class ProductListView(APIView):
                 ids, include_detailed=True
             )
 
+        t_after_db = time.perf_counter()
+
         items = catalog_hot_reads.product_rows_to_card_dicts(
             rows,
             specifications_map,
@@ -360,24 +403,35 @@ class ProductListView(APIView):
             'has_previous': has_previous,
         }).data
 
-        if _is_default_product_list_cacheable(
-            category_id=list_request.category_id,
-            subcategory_ids=list_request.subcategory_ids,
-            subcategory_slugs=list_request.subcategory_slugs,
-            search=list_request.search,
-            availability=list_request.availability,
-            spec_filters=list_request.spec_filters,
-            page=list_request.page,
-            page_size=list_request.page_size,
-            include_detailed_specs=list_request.include_detailed_specs,
-        ):
+        t_after_serialize = time.perf_counter()
+
+        db_ms = (t_after_db - t_db_start) * 1000.0
+        serialize_ms = (t_after_serialize - t_after_db) * 1000.0
+        total_ms = (t_after_serialize - t0) * 1000.0
+        logger.info(
+            'products.list cache=%s total_ms=%.1f db_ms=%.1f serialize_ms=%.1f '
+            'items=%d page=%d page_size=%d total_rows=%d',
+            cache_state,
+            total_ms,
+            db_ms,
+            serialize_ms,
+            len(items),
+            list_request.page,
+            list_request.page_size,
+            total,
+        )
+
+        if cacheable:
             cache.set(
                 product_list_default_cache_key(),
                 payload,
                 timeout=settings.CACHE_TIMEOUT,
             )
 
-        return success_response(payload)
+        resp = success_response(payload)
+        if cacheable:
+            return _with_public_cache_headers(resp)
+        return resp
 
 
 class ProductDetailView(APIView):
@@ -397,7 +451,7 @@ class ProductDetailView(APIView):
             )
             cached_payload = cache.get(cache_key)
             if cached_payload is not None:
-                return success_response(cached_payload)
+                return _with_public_cache_headers(success_response(cached_payload))
 
             product = catalog_hot_reads.load_product_detail_orm(int(product_id))
             specs_map = _product_repo.get_specifications_batch(
@@ -412,7 +466,7 @@ class ProductDetailView(APIView):
                 )
             ).data
             cache.set(cache_key, payload, timeout=settings.CACHE_TIMEOUT)
-            return success_response(payload)
+            return _with_public_cache_headers(success_response(payload))
         except NotFoundError as e:
             return error_response(str(e), status=status.HTTP_404_NOT_FOUND)
 

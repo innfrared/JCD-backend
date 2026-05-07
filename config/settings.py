@@ -87,12 +87,9 @@ if DATABASE_URL:
         )
     }
 
-    # PgBouncer (transaction pooler): persistent connections + no server-side cursors.
     db_conn_max_age = os.environ.get('DB_CONN_MAX_AGE')
     if db_conn_max_age is not None:
         DATABASES['default']['CONN_MAX_AGE'] = int(db_conn_max_age)
-    elif 'pooler.supabase.com' in DATABASE_URL:
-        DATABASES['default']['CONN_MAX_AGE'] = 60
     else:
         DATABASES['default']['CONN_MAX_AGE'] = 600
 
@@ -108,25 +105,48 @@ else:
         }
     }
 
-CACHE_BACKEND = os.environ.get(
-    'CACHE_BACKEND',
-    'django.core.cache.backends.filebased.FileBasedCache',
-)
-CACHE_LOCATION = os.environ.get(
-    'CACHE_LOCATION',
-    str(BASE_DIR / '.django_cache'),
-)
-CACHE_TIMEOUT = int(os.environ.get('CACHE_TIMEOUT_SECONDS', '300'))
+CACHE_BACKEND = os.environ.get('CACHE_BACKEND')
+CACHE_TIMEOUT = int(os.environ.get('CACHE_TIMEOUT_SECONDS', '3600'))
+_CACHE_MAX_ENTRIES = int(os.environ.get('CACHE_MAX_ENTRIES', '10000'))
 
-CACHES = {
-    'default': {
-        'BACKEND': CACHE_BACKEND,
-        'LOCATION': CACHE_LOCATION,
-        'TIMEOUT': CACHE_TIMEOUT,
-        'OPTIONS': {
-            'MAX_ENTRIES': int(os.environ.get('CACHE_MAX_ENTRIES', '10000')),
-        },
+if CACHE_BACKEND:
+    CACHES = {
+        'default': {
+            'BACKEND': CACHE_BACKEND,
+            'LOCATION': os.environ.get('CACHE_LOCATION', ''),
+            'TIMEOUT': CACHE_TIMEOUT,
+            'OPTIONS': {
+                'MAX_ENTRIES': _CACHE_MAX_ENTRIES,
+            },
+        }
     }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'jcd-default',
+            'TIMEOUT': CACHE_TIMEOUT,
+            'OPTIONS': {
+                'MAX_ENTRIES': _CACHE_MAX_ENTRIES,
+            },
+        }
+    }
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'catalog.timing': {
+            'handlers': ['console'],
+            'level': os.environ.get('CATALOG_TIMING_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+    },
 }
 
 AUTH_PASSWORD_VALIDATORS = [

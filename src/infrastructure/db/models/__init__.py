@@ -1,13 +1,13 @@
 from .users import User, Address
 from .catalog import (
-    Category, Subcategory, VariantGroup, Product, ProductVariant, VariantSize,
+    Category, Subcategory, VariantGroup, Product, ProductVariant, ProductVariantImage, VariantSize,
     Attribute, AttributeOption, ProductAttributeValue, ProductAttributeOption
 )
 from .homepage import HomeSection, HomeSectionItem
 
 __all__ = [
     'User', 'Address',
-    'Category', 'Subcategory', 'VariantGroup', 'Product', 'ProductVariant', 'VariantSize',
+    'Category', 'Subcategory', 'VariantGroup', 'Product', 'ProductVariant', 'ProductVariantImage', 'VariantSize',
     'Attribute', 'AttributeOption', 'ProductAttributeValue', 'ProductAttributeOption',
     'HomeSection', 'HomeSectionItem'
 ]
